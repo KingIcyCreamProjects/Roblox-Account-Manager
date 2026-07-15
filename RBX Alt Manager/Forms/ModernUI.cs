@@ -340,14 +340,30 @@ namespace RBX_Alt_Manager.Forms
             var accounts = Users(m);
             if (accounts.Count == 0) { Toast("Select at least one account first"); return; }
 
+            // Most common "nothing happens": a Roblox client is already open and Multi-Roblox is off, so the
+            // new instance silently no-ops on Roblox's single-instance lock. Warn instead of leaving them guessing.
+            try
+            {
+                bool multi = AccountManager.General != null && AccountManager.General.Get<bool>("EnableMultiRbx");
+                if (!multi && Process.GetProcessesByName("RobloxPlayerBeta").Length > 0)
+                    Toast("A Roblox client is already open — enable Multi-Roblox in Settings to launch more than one at once.");
+            }
+            catch { }
+
             double delay = 8;
             try { double.TryParse(AccountManager.General?.Get("AccountJoinDelay"), out delay); } catch { }
             if (delay < 1) delay = 1;
 
             foreach (var a in accounts)
             {
-                try { await a.JoinServer(placeId, jobId); }
-                catch (Exception ex) { Program.Logger.Error($"[ModernUI] launch {a.Username}: {ex}"); }
+                try
+                {
+                    string res = await a.JoinServer(placeId, jobId);
+                    // JoinServer returns "Success" or an "ERROR: ..." string — surface failures instead of swallowing them.
+                    if (!string.IsNullOrEmpty(res) && res != "Success")
+                        Toast(res.StartsWith("ERROR:") ? res.Substring(6).Trim() : res);
+                }
+                catch (Exception ex) { Program.Logger.Error($"[ModernUI] launch {a.Username}: {ex}"); Toast($"Launch failed: {ex.Message}"); }
                 if (accounts.Count > 1) await Task.Delay((int)(delay * 1000));
             }
         }
@@ -425,7 +441,10 @@ namespace RBX_Alt_Manager.Forms
                     case "async": AccountManager.General.Set("AsyncJoin", val); break;
                     case "shuffleLowest": AccountManager.General.Set("ShuffleChoosesLowestServer", val); break;
                     case "fpsUnlock": AccountManager.General.Set("UnlockFPS", val); break;
-                    case "multiRoblox": AccountManager.General.Set("EnableMultiRbx", val); break;
+                    case "multiRoblox":
+                        AccountManager.General.Set("EnableMultiRbx", val);
+                        try { if (!AccountManager.Instance.UpdateMultiRoblox()) Toast("Multi-Roblox saved — close open Roblox windows for it to take effect."); } catch { }
+                        break;
                     case "webApi": AccountManager.Developer.Set("EnableWebServer", val); break;
                     case "autoRelaunch": AccountManager.AccountControl.Set("StartOnLaunch", val); break;
                     case "autoCookie":

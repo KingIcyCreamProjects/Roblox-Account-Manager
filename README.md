@@ -28,6 +28,11 @@ Multiple Roblox instances are built in but [must be manually enabled](#q-how-do-
 You are welcome to edit the code and open pull requests if it'll benefit this project. Found a bug? Open an issue on this repository.
 
 ## What's new
+### v1.1.4 — Launch feedback
+- **Launch now tells you what happened.** If nothing opens, you get a message with the reason (e.g. an expired cookie, or "a Roblox client is already open — enable Multi-Roblox"). Previously a failed launch was completely silent.
+- **Multi-Roblox** toggled in the modern UI now takes effect immediately.
+- Removed the fake "Blox Fruits ✓" tag next to the Place ID (it showed no matter what you typed).
+
 ### v1.1.3 — Modern UI wiring
 Fixed a large batch of modern-UI controls that changed only the on-screen state without actually doing anything:
 - **Place ID is now remembered.** It loads your last-used Place ID and saves it when you launch. "Save target" now also saves a default when no account is selected (instead of silently doing nothing), and every action shows a small confirmation.
