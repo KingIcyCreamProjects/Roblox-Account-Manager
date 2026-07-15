@@ -1404,6 +1404,22 @@ namespace RBX_Alt_Manager
                 CefBrowser.Instance.Login();
         }
 
+        // Entry points reused by the modern (WebView2) UI — they drive the exact same proven flows.
+        public async Task ModernAddAccount()
+        {
+            if (PuppeteerSupported) await new AccountBrowser().Login();
+            else CefBrowser.Instance.Login();
+        }
+
+        public void ModernOpenBrowser(Account acc)
+        {
+            if (acc == null) return;
+            if (PuppeteerSupported) new AccountBrowser(acc);
+            else CefBrowser.Instance.EnterBrowserMode(acc);
+        }
+
+        public void SaveSettings() { try { IniSettings.Save("RAMSettings.ini"); } catch (Exception ex) { Program.Logger.Error($"SaveSettings: {ex}"); } }
+
         private void DownloadProgressBar_Click(object sender, EventArgs e)
         {
             static void ShowManualInstallInstructions()

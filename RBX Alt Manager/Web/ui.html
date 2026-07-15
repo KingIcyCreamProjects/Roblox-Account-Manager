@@ -754,6 +754,13 @@ function screenAppearance(){
           <div style="display:flex;align-items:center;gap:8px;background:linear-gradient(135deg,${acc[2]},${acc[3]});border-radius:6px;padding:6px 14px;"><span class="ck" style="font-size:12px;font-weight:700;color:#04121F;">Primary</span></div>
         </div>
       </div>
+      <div>
+        <div style="font-size:12px;font-weight:600;color:var(--tx-2);margin-bottom:9px;">Interface</div>
+        <div style="background:var(--surface);border:1px solid var(--bd-mid);border-radius:10px;padding:14px;display:flex;align-items:center;gap:12px;">
+          <div style="flex:1;"><div style="font-size:12.5px;font-weight:600;">Switch to the classic interface</div><div style="font-size:10.5px;color:var(--tx-dim);">Use the original KingsRAM window. You can switch back anytime in settings.</div></div>
+          <div class="ghostBtn" data-act="switchToClassic" style="padding:6px 14px;">Use classic UI</div>
+        </div>
+      </div>
     </div>
   </div>`;
 }
@@ -969,6 +976,7 @@ function handleAction(act,u,e){
     case 'joinSrv': bsend({type:'joinServer'}); log('Join server'); break;
     case 'joinGame': bsend({type:'joinGame'}); log('Join game'); break;
     case 'favGame': bsend({type:'favGame'}); log('Favorite game'); break;
+    case 'switchToClassic': bsend({type:'switchToClassic'}); break;
     default: bsend({type:'action',action:act,user:u}); log('action',act,u);
   }
 }

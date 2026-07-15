@@ -32,6 +32,7 @@ namespace RBX_Alt_Manager.Forms
         private Form owner;
         private System.Windows.Forms.Timer pushTimer;
         private bool ready;
+        private bool switchingToClassic;
 
         // Open the modern UI, hiding the classic window on success. Safe to call more than once (no-ops after first).
         public static void Launch(Form classicOwner)
@@ -70,7 +71,7 @@ namespace RBX_Alt_Manager.Forms
 
             HandleCreated += (s, e) => ApplyDarkTitleBar();
             Load += async (s, e) => { ApplyDarkTitleBar(); await InitAsync(); };
-            FormClosed += (s, e) => { try { Application.Exit(); } catch { } };
+            FormClosed += (s, e) => { if (!switchingToClassic) { try { Application.Exit(); } catch { } } };
         }
 
         private async Task InitAsync()
@@ -253,6 +254,7 @@ namespace RBX_Alt_Manager.Forms
                     case "closeAll": CloseAllClients(); break;
                     case "minimize": case "minimizeAll": Program.Logger.Info($"[ModernUI] {type} (not yet wired)"); break;
                     case "add": HandleAdd(m); break;
+                    case "switchToClassic": SwitchToClassic(); break;
                     default: Program.Logger.Info($"[ModernUI] unhandled: {m}"); break;
                 }
             }
@@ -352,8 +354,17 @@ namespace RBX_Alt_Manager.Forms
 
         private void HandleOpenBrowser(JObject m)
         {
-            // Route to the classic open-browser flow for now (Puppeteer/CefSharp). Best-effort.
-            Program.Logger.Info("[ModernUI] openBrowser -> classic flow not yet bridged");
+            foreach (var a in Users(m)) AccountManager.Instance.ModernOpenBrowser(a);
+        }
+
+        // Switch back to the classic UI (safety escape) — persists the choice and doesn't exit the app.
+        public void SwitchToClassic()
+        {
+            try { AccountManager.General.Set("UseModernUI", "false"); AccountManager.Instance.SaveSettings(); } catch { }
+            switchingToClassic = true;
+            try { pushTimer?.Stop(); } catch { }
+            try { owner?.Show(); owner?.BringToFront(); } catch { }
+            Close();
         }
 
         private void HandleUtilities(JObject m)
@@ -394,20 +405,21 @@ namespace RBX_Alt_Manager.Forms
             catch (Exception ex) { Program.Logger.Error($"[ModernUI] closeAll: {ex}"); }
         }
 
-        private void HandleAdd(JObject m)
+        private async void HandleAdd(JObject m)
         {
             string mode = (string)m["mode"] ?? "manual";
-            if (mode == "cookie")
+            try
             {
-                try { new ImportForm().Show(this); }
-                catch (Exception ex) { Program.Logger.Error($"[ModernUI] add cookie: {ex}"); }
+                switch (mode)
+                {
+                    case "cookie": new ImportForm().Show(this); break;
+                    case "manual": await AccountManager.Instance.ModernAddAccount(); PushAccounts("accounts"); break;
+                    default:
+                        MessageBox.Show(this, "That add method isn't in the new UI yet — use Manual Login or Cookie import.", "KingsRAM", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        break;
+                }
             }
-            else
-            {
-                // manual / userpass / custom flows are deeply tied to the classic add pipeline; surface it there for now.
-                Program.Logger.Info($"[ModernUI] add mode '{mode}' -> use classic Add flow (not yet bridged)");
-                MessageBox.Show(this, "Adding accounts via " + mode + " isn't wired into the new UI yet — use Cookie import, or the classic window for now.", "KingsRAM", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
+            catch (Exception ex) { Program.Logger.Error($"[ModernUI] add {mode}: {ex}"); }
         }
     }
 }
