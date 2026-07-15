@@ -121,12 +121,24 @@ namespace RBX_Alt_Manager
 
             if (!GetCSRFToken(out string Token)) return false;
 
+            // Roblox rejects this POST with 415 UnsupportedMediaType unless it carries a JSON body + content type.
+            // The explicit Content-Type header is load-bearing: on .NET Framework, AddJsonBody alone emits
+            // "application/json; charset=utf-8", but every working client (and the known-good request) sends the
+            // bare "application/json" — the header forces that form. Do NOT delete it "because AddJsonBody sets it".
             RestRequest request = MakeRequest("/v1/authentication-ticket/", Method.Post)
                 .AddHeader("X-CSRF-TOKEN", Token)
+                .AddHeader("Content-Type", "application/json")
                 .AddHeader("Origin", "https://www.roblox.com")
-                .AddHeader("Referer", "https://www.roblox.com/games/4924922222/Brookhaven-RP");
+                .AddHeader("Referer", "https://www.roblox.com/games/4924922222/Brookhaven-RP")
+                .AddJsonBody(new { });
 
             RestResponse response = AccountManager.AuthClient.Execute(request);
+
+            // Roblox rotates .ROBLOSECURITY via Set-Cookie every few hours-to-days (enforced 2026-05-01); a client
+            // that keeps sending the old value eventually gets 401'd — this is why alts "go invalid so quick".
+            // Persist the rotated cookie from the launch hot path. Guarded (valid-looking + changed) so a partial or
+            // junk value can never clobber a good cookie. ponytail: harvests here only, not a global response hook.
+            HarvestRotatedCookie(response);
 
             Parameter TicketHeader = response.Headers.FirstOrDefault(x => x.Name == "rbx-authentication-ticket");
 
@@ -141,6 +153,21 @@ namespace RBX_Alt_Manager
             Program.Logger.Warn($"[AuthTicket] {Username}: no ticket header [{(int)response.StatusCode} {response.StatusCode}] {response.Content}");
 
             return false;
+        }
+
+        // If a response carried a rotated .ROBLOSECURITY (Roblox's Set-Cookie cadence), adopt it. Only replaces the
+        // stored cookie when the new value looks real (has the WARNING marker + plausible length) and actually differs,
+        // so a truncated/garbage Set-Cookie can never sign the account out.
+        private void HarvestRotatedCookie(RestResponse response)
+        {
+            var Rotated = response?.Cookies?[".ROBLOSECURITY"];
+
+            if (Rotated != null && !string.IsNullOrEmpty(Rotated.Value) && Rotated.Value.Length > 100 && Rotated.Value.Contains("WARNING") && Rotated.Value != SecurityToken)
+            {
+                SecurityToken = Rotated.Value;
+                LastUse = DateTime.Now;
+                AccountManager.SaveAccounts();
+            }
         }
 
         public bool GetCSRFToken(out string Result)

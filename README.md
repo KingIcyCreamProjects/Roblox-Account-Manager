@@ -28,6 +28,10 @@ Multiple Roblox instances are built in but [must be manually enabled](#q-how-do-
 You are welcome to edit the code and open pull requests if it'll benefit this project. Found a bug? Open an issue on this repository.
 
 ## What's new
+### v1.1.7 — Launch actually works ("415 Unsupported Media Type" fix)
+- **Fixed the real cause of failed launches.** Roblox started rejecting the authentication-ticket request with *415 Unsupported Media Type* unless it is sent as JSON. Launches now include the correct JSON content type and body, so accounts can join games again. (v1.1.6 added the `Origin` header, which was necessary but not sufficient — this is the missing piece.)
+- **Accounts stay valid longer.** Roblox now periodically re-issues your login cookie (via `Set-Cookie`) and eventually rejects the old one — the reason alts seemed to "go invalid" quickly. KingsRAM now picks up the refreshed cookie automatically each time you launch and saves it, guarded so a bad value can never sign you out.
+
 ### v1.1.6 — Launch "Invalid Authentication Ticket" fix
 - Fixed launches failing with **"Invalid Authentication Ticket … Roblox has probably signed you out"** even right after signing in. Roblox now requires an `Origin` header on the authentication-ticket request; it's now sent. If a launch still can't get a ticket, the exact Roblox response is written to `log.txt` for diagnosis.
 
