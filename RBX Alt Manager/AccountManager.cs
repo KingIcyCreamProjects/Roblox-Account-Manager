@@ -172,6 +172,9 @@ namespace RBX_Alt_Manager
             this.Rescale();
 
             Shown += (s, e) => MaybeLaunchModern();
+            // Catch-all: whenever the password/encryption overlay closes (first-run setup, unlock, etc.),
+            // the main UI is ready — open the modern UI. Idempotent (guarded by the Launched flag).
+            PasswordPanel.VisibleChanged += (s, e) => { if (!PasswordPanel.Visible) MaybeLaunchModern(); };
 
             DonateButton.Visible = false; // was ic3w0lf22's donate page; no fork donate page
 
@@ -502,6 +505,8 @@ namespace RBX_Alt_Manager
             SaveAccounts(true, true);
 
             PasswordPanel.Visible = false;
+
+            MaybeLaunchModern(); // first-run just finished — open the modern UI now (this path skips LoadAccounts)
         }
 
         private void PasswordEncryptionButton_Click(object sender, EventArgs e)
@@ -541,6 +546,8 @@ namespace RBX_Alt_Manager
                     PasswordPanel.Visible = false;
 
                     LastHash = null;
+
+                    MaybeLaunchModern(); // first-run (password) just finished — open the modern UI now
                 }
                 else
                     MessageBox.Show("You have entered the wrong password, please try again.", "KingsRAM", MessageBoxButtons.OK, MessageBoxIcon.Error);
