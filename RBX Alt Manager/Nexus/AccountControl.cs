@@ -487,7 +487,7 @@ namespace RBX_Alt_Manager.Forms
             Process.Start("explorer.exe", "/select, " + path);
         }
 
-        private void NexusDocsButton_Click(object sender, EventArgs e) => Process.Start("https://github.com/ic3w0lf22/Roblox-Account-Manager/blob/master/RBX%20Alt%20Manager/Nexus/NexusDocs.md");
+        private void NexusDocsButton_Click(object sender, EventArgs e) => Process.Start("https://github.com/KingIcyCreamProjects/Roblox-Account-Manager/blob/master/RBX%20Alt%20Manager/Nexus/NexusDocs.md");
 
         private async void AutoRelaunchTimer_Tick(object sender, EventArgs e)
         {

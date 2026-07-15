@@ -362,6 +362,7 @@ namespace RBX_Alt_Manager.Forms
         {
             try { AccountManager.General.Set("UseModernUI", "false"); AccountManager.Instance.SaveSettings(); } catch { }
             switchingToClassic = true;
+            Launched = false; // allow re-opening the modern UI later (e.g. from the classic Settings toggle)
             try { pushTimer?.Stop(); } catch { }
             try { owner?.Show(); owner?.BringToFront(); } catch { }
             Close();

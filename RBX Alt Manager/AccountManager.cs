@@ -166,11 +166,14 @@ namespace RBX_Alt_Manager
             if (!AccountControl.Exists("NexusPort")) AccountControl.Set("NexusPort", "5242");
 
             if (!General.Exists("UseModernUI")) General.Set("UseModernUI", "true"); // WebView2 redesign; classic UI is the fallback
+            if (!General.Exists("DiscordLink")) General.Set("DiscordLink", "https://discord.com/channels/1526775420966670476"); // KingsRAM Discord (paste a discord.gg invite here)
 
             InitializeComponent();
             this.Rescale();
 
             Shown += (s, e) => MaybeLaunchModern();
+
+            DonateButton.Visible = false; // was ic3w0lf22's donate page; no fork donate page
 
             AccountsList = new List<Account>();
             SelectedAccounts = new List<Account>();
@@ -1860,7 +1863,12 @@ namespace RBX_Alt_Manager
             }
         }
 
-        private void JoinDiscord_Click(object sender, EventArgs e) => Process.Start("https://discord.gg/MsEH7smXY8");
+        // KingsRAM's own Discord (was ic3w0lf22's). Reads from settings so you can paste a real
+        // discord.gg invite into RAMSettings.ini [General] DiscordLink= without a rebuild.
+        private void JoinDiscord_Click(object sender, EventArgs e)
+            => Process.Start(General.Exists("DiscordLink") && !string.IsNullOrWhiteSpace(General.Get("DiscordLink"))
+                ? General.Get("DiscordLink")
+                : "https://discord.com/channels/1526775420966670476");
 
         private void OpenBrowser_Click(object sender, EventArgs e)
         {
@@ -2135,7 +2143,7 @@ namespace RBX_Alt_Manager
             MessageBox.Show("Groups can be sorted by naming them a number then whatever you want.\nFor example: You can put Group Apple on top by naming it '001 Apple' or '1Apple'.\nThe numbers will be hidden from the name but will be correctly sorted depending on the number.\nAccounts can also be dragged into groups.", "KingsRAM", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
         private void DonateButton_Click(object sender, EventArgs e) =>
-            Process.Start("https://ic3w0lf22.github.io/donate.html");
+            Process.Start("https://github.com/KingIcyCreamProjects/Roblox-Account-Manager"); // donate page removed; button hidden
 
         private void ConfigButton_Click(object sender, EventArgs e)
         {

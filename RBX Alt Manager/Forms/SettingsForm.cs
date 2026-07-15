@@ -19,6 +19,33 @@ namespace RBX_Alt_Manager.Forms
 
             InitializeComponent();
             this.Rescale();
+
+            // Runtime-added toggle so users can switch to the modern (WebView2) UI without editing RAMSettings.ini.
+            try
+            {
+                var modernCB = new CheckBox
+                {
+                    AutoSize = true,
+                    Text = "Use Modern UI",
+                    UseVisualStyleBackColor = true,
+                    ForeColor = ForeColor,
+                    Margin = new Padding(15, 6, 3, 3),
+                    Checked = AccountManager.General.Get<bool>("UseModernUI")
+                };
+                modernCB.CheckedChanged += (s, e) =>
+                {
+                    AccountManager.General.Set("UseModernUI", modernCB.Checked ? "true" : "false");
+                    AccountManager.Instance?.SaveSettings();
+                    if (modernCB.Checked)
+                    {
+                        ModernUI.Launch(AccountManager.Instance);
+                        Close();
+                    }
+                };
+                SettingsLayoutPanel.Controls.Add(modernCB);
+                SettingsLayoutPanel.SetFlowBreak(modernCB, true);
+            }
+            catch { }
         }
 
         private void SettingsForm_Load(object sender, EventArgs e)

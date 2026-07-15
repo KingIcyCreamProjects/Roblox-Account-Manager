@@ -16,20 +16,24 @@
 > - If you see a blue **"Windows protected your PC"** box: click **More info → Run anyway**.
 > - If your antivirus deletes files, add an **exclusion** for the app folder.
 
-# KingsRAM v1.0
-**KingsRAM** is a personal, security-hardened fork of [Roblox Account Manager](https://github.com/ic3w0lf22/Roblox-Account-Manager) (originally by ic3w0lf22, GNU GPLv3), maintained by [KingIcyCreamProjects](https://github.com/KingIcyCreamProjects). This is the fork's **first release** — it carries all of Roblox Account Manager's features plus a reliability and security hardening pass (see [What's new](#whats-new-in-v10)).
+# KingsRAM
+**KingsRAM** is a personal, security-hardened fork of [Roblox Account Manager](https://github.com/ic3w0lf22/Roblox-Account-Manager) by ic3w0lf22 (GNU GPLv3), maintained by [KingIcyCreamProjects](https://github.com/KingIcyCreamProjects). It keeps the original's full feature set and adds a brand-new interface, reliability fixes, and a security hardening pass (see [What's new](#whats-new)).
 
 Add multiple accounts into one application and easily play on alt accounts without switching accounts. Useful for games that require grinding off other players, storage accounts that hold in-game items or currency, or just keeping many accounts organized and ready to use.
 
-Multiple Roblox instances are built in but [must be manually enabled](https://github.com/ic3w0lf22/Roblox-Account-Manager/blob/master/README.md#q-how-do-i-enable-multi-roblox).
+Multiple Roblox instances are built in but [must be manually enabled](#q-how-do-i-enable-multi-roblox).
 
-[Click here to view the full feature list](https://github.com/ic3w0lf22/Roblox-Account-Manager/blob/master/README.md#features) (documented on the upstream project — the feature set is the same).
+[Jump to the full feature list.](#features)
 
 You are welcome to edit the code and open pull requests if it'll benefit this project. Found a bug? Open an issue on this repository.
 
-## What's new in v1.0
-KingsRAM v1.0 is based on Roblox Account Manager 3.x with the following fixes layered on top:
+## What's new
+### v1.1 — Modern interface
+- A completely redesigned dark UI: a sidebar (Accounts / Active / Server Browser / Settings / Appearance), a grouped account roster with clear status badges, and a compact windowed layout.
+- New **Active Accounts** view — see which accounts are live / in-game at a glance.
+- Runs in an embedded Microsoft Edge WebView2 window. Prefer the classic look? **Appearance → "Use classic UI"**, and switch back anytime via the classic **Settings → "Use Modern UI"**.
 
+### v1.0 — Reliability & security hardening
 **Fewer random disconnects**
 - The Account Control (Nexus) websocket no longer drops healthy sessions — the keep-alive sweep that force-closed clients whose socket didn't answer within one second has been disabled in favor of the app's own liveness check.
 - Fixed a reconnect/teleport race that could show a still-connected account as offline.
@@ -71,7 +75,7 @@ Be careful executing random scripts when having dangerous settings enabled.
 # Frequently Asked Questions
 ## **Q:** Why is this program detected as a virus?
 
-**A:** Open source programs such as this program are commonly detected as viruses because actual malware may be using the same libaries as this one. For example, account manager may be detected as a RAT because of the Account Control feature, this feature uses [websockets](https://github.com/ic3w0lf22/Roblox-Account-Manager/blob/master/RBX%20Alt%20Manager/Nexus/WebsocketServer.cs) to connect to clients which is the same way actual malware may use to connect maliciously to someone elses computer. If you'd like, you can download [visual studio](https://visualstudio.microsoft.com/downloads/) yourself (it's free) and compile this program on your own, you may even get the same virus detections as the public release.
+**A:** Open source programs such as this program are commonly detected as viruses because actual malware may be using the same libaries as this one. For example, account manager may be detected as a RAT because of the Account Control feature, this feature uses [websockets](https://github.com/KingIcyCreamProjects/Roblox-Account-Manager/blob/master/RBX%20Alt%20Manager/Nexus/WebsocketServer.cs) to connect to clients which is the same way actual malware may use to connect maliciously to someone elses computer. If you'd like, you can download [visual studio](https://visualstudio.microsoft.com/downloads/) yourself (it's free) and compile this program on your own, you may even get the same virus detections as the public release.
 
 
 ## **Q:** How do I enable multi-roblox?
@@ -159,7 +163,7 @@ Make sure you click "Open Details" before screenshotting. Please make sure your 
 | :--- | :---: | ---: |
 | Account Encryption | All your account data is locally encrypted using your computer as the **password/key** meaning if someone else gets a hold of your account data, they will **NOT** be able to decrypt it unless you decrypted it yourself and shared it | **DO NOT SHARE YOUR `AccountData.json` FILE AT ALL |
 | Password Encryption | Use a password to encrypt your data | This is recommended as it allows you store your data safely in google drive/similar and won't get corrupted due to you switching computers |
-| [Multi Roblox](https://github.com/ic3w0lf22/Roblox-Account-Manager/blob/master/README.md#q-how-do-i-enable-multi-roblox) | [DISABLED BY DEFAULT, READ FAQ] RAM comes with a built-in multi Roblox allowing multiple Roblox clients to be open at once | **If this doesn't work for you, make sure no Roblox processes are running in the background by checking in task manager, then restart RAM** |
+| [Multi Roblox](https://github.com/KingIcyCreamProjects/Roblox-Account-Manager/blob/master/README.md#q-how-do-i-enable-multi-roblox) | [DISABLED BY DEFAULT, READ FAQ] RAM comes with a built-in multi Roblox allowing multiple Roblox clients to be open at once | **If this doesn't work for you, make sure no Roblox processes are running in the background by checking in task manager, then restart RAM** |
 | Load Region | See where a server is located and get an accurate ping reading | Right click a server in the `Server List`, then click `Load Region` **(Requires a valid account to be selected in the main window)** |
 | Server List | See a game's servers, including the servers' data such as player count and server ping | Click `Server List` on the right side of the main window |
 | [Join Small Servers](https://youtu.be/Red66cV6vVI) | Easily join small servers in games that use lobby starter places to teleport you to another game | Insert the actual game's PlaceId into the text box next to `Refresh` in the `Server List`, click `Refresh`, then right click a server and click `Join Game`, you will hear a beep if successful, once you hear that beep, you can join the main game |
@@ -184,7 +188,7 @@ Make sure you click "Open Details" before screenshotting. Please make sure your 
 | Themes | Customize RAM to your liking (P.S. I know it's very ugly, not much I can do about it with WinForms) | Click `Edit Theme` in the main window |
 | Developer Mode | Enable hidden features not available to normal users for safety reasons | Click the settings button (gear cog in top-right corner), click `Developer`, then check the `Enable Developer Mode` box |
 | Local Web API | Easily use many RAM features by making a simple http request | [Documentation](https://ic3w0lf22.gitbook.io/roblox-account-manager/) |
-| Account Control | Control your in-game accounts using the `Account Control` window in RAM | Click `Account Control` in the main window - [Documentation](https://github.com/ic3w0lf22/Roblox-Account-Manager/blob/master/RBX%20Alt%20Manager/Nexus/NexusDocs.md) |
+| Account Control | Control your in-game accounts using the `Account Control` window in RAM | Click `Account Control` in the main window - [Documentation](https://github.com/KingIcyCreamProjects/Roblox-Account-Manager/blob/master/RBX%20Alt%20Manager/Nexus/NexusDocs.md) |
 | Import Cookies | Import accounts using their .ROBLOSECURITY cookies | You can drag and drop one or multiple cookies directly into the program, or you can enable developer mode and use the `Import` window |
 | FPS Unlocker | Unlocks the Roblox client's FPS using Roblox's ClientAppSettings.json | Settings can be found by clicking the settings cog, then miscellaneous |
 | Bulk User Importing | Easily import your accounts by their username & password combos, or by cookies | Click the arrow on the right side of the `Add Account` button, then select user:pass/cookies |
@@ -195,14 +199,5 @@ Make sure you click "Open Details" before screenshotting. Please make sure your 
 | Quick Log In | Easily log in to an account on a different computer using Roblox's Quick Log In feature | Right click an account, then select `Quick Log In` |
 | AI Captcha Assistance | Assists you in the "Pick the image" captchas using the Nopecha API (Requires a subscription key) | You can enable auto solve, but it is not recommended to use, your best option is to add a captcha solving extension to the browser along with a BrowserConfig to automatically set the key per new browser opened |
 
-# Preview (Version 3.4)
-![github-large](Images/Image4.png)
-
-# Preview (Version 3.1)
-![github-large](Images/Image3.png)
-
-# Preview (Version 2.6)
-![github-large](Images/image2.png)
-
-# Preview (Old)
-![github-large](Images/Image1.png)
+# Preview
+![KingsRAM modern UI](Images/KingsRAM-modern-ui.png)
