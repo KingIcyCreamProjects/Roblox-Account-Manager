@@ -140,7 +140,7 @@ const S = {
   followUser:false,
   srvTab:'servers',
   accent:'cyan',
-  density:'breathable',
+  density:'comfortable',
   toggles:{               // settings toggles
     checkUpdates:true, savePw:true, multiRoblox:true, disableAging:false, autoCookie:true,
     async:false, shuffleLowest:true, fpsUnlock:false, autoRelaunch:true, webApi:false
@@ -448,7 +448,7 @@ function launchBar(){
     <div style="display:flex;flex-direction:column;gap:3px;">
       <span style="font-size:9.5px;font-weight:600;letter-spacing:.08em;color:var(--tx-dim);">PLACE ID</span>
       <div style="display:flex;align-items:center;gap:8px;">
-        <input id="placeId" value="5315046213" class="mono" style="width:110px;background:#0B1120;border:1px solid var(--bd-mid);border-radius:6px;color:var(--tx-hi);font-size:11.5px;padding:6px 8px;">
+        <input id="placeId" value="${(window.__place||'5315046213')}" class="mono" style="width:110px;background:#0B1120;border:1px solid var(--bd-mid);border-radius:6px;color:var(--tx-hi);font-size:11.5px;padding:6px 8px;">
         <div style="display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--bd-mid);border-radius:6px;padding:4px 8px;">
           <div class="ck" style="width:18px;height:18px;border-radius:4px;background:linear-gradient(135deg,hsl(210,50%,35%),hsl(250,50%,25%));display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff;">BF</div>
           <span style="font-size:11.5px;color:var(--tx-2);font-weight:600;">Blox Fruits</span>
@@ -458,7 +458,7 @@ function launchBar(){
     </div>
     <div style="display:flex;flex-direction:column;gap:3px;">
       <span style="font-size:9.5px;font-weight:600;letter-spacing:.08em;color:var(--tx-dim);">JOB ID / PRIVATE SERVER</span>
-      <input id="jobId" placeholder="optional" class="mono" style="width:170px;background:#0B1120;border:1px solid var(--bd-mid);border-radius:6px;color:var(--tx-hi);font-size:11.5px;padding:6px 8px;">
+      <input id="jobId" value="${(window.__job||'')}" placeholder="optional" class="mono" style="width:170px;background:#0B1120;border:1px solid var(--bd-mid);border-radius:6px;color:var(--tx-hi);font-size:11.5px;padding:6px 8px;">
     </div>
     <div style="flex:1;"></div>
     <div style="position:relative;align-self:flex-end;">
@@ -628,6 +628,7 @@ function screenServers(){
   <div style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg-app);">
     <div style="flex:none;display:flex;align-items:center;gap:10px;padding:12px 16px 0;">
       <span class="ck" style="font-weight:600;font-size:15px;">Server Browser</span>
+      <span style="font-size:10px;color:var(--warn);border:1px solid rgba(245,166,35,.3);background:rgba(245,166,35,.08);border-radius:5px;padding:1px 7px;font-weight:600;">Preview · sample data</span>
       <div style="display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--bd-mid);border-radius:6px;padding:4px 8px;"><div class="ck" style="width:18px;height:18px;border-radius:4px;background:linear-gradient(135deg,hsl(210,50%,35%),hsl(250,50%,25%));display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff;">BF</div><span style="font-size:11.5px;color:var(--tx-2);font-weight:600;">Blox Fruits</span></div>
     </div>
     <div style="flex:none;display:flex;gap:2px;padding:8px 16px 0;border-bottom:1px solid var(--bd);">
@@ -847,6 +848,10 @@ function wire(){
   const gs=$('globalSearch');
   if(gs) gs.oninput=e=>{ S.search=e.target.value; const cs=e.target.selectionStart; render(); const g2=$('globalSearch'); if(g2){g2.focus(); try{g2.setSelectionRange(cs,cs);}catch(_){}} };
 
+  // keep the Place ID / Job typed value across the periodic auto-refresh (no re-render per keystroke)
+  const pin=$('placeId'); if(pin) pin.oninput=e=>{ window.__place=e.target.value; };
+  const jin=$('jobId'); if(jin) jin.oninput=e=>{ window.__job=e.target.value; };
+
   // detail alias/notes live edit (no re-render on each keystroke; commit on input)
   const da=$('detAlias'); if(da) da.oninput=e=>{ if(byName[S.detail]){ byName[S.detail].alias=e.target.value; bsend({type:'setAlias',user:S.detail,value:e.target.value}); } };
   const dn=$('detNotes'); if(dn) dn.oninput=e=>{ if(byName[S.detail]){ byName[S.detail].notes=e.target.value; bsend({type:'setNotes',user:S.detail,value:e.target.value}); } };
@@ -877,19 +882,21 @@ function wire(){
     const setF=closest('[data-set]'); if(setF){ S[setF.getAttribute('data-set')]=setF.getAttribute('data-val'); S.openDrop=null; render(); return; }
 
     // add-account menu items
-    const am=closest('[data-add]'); if(am){ log('add account →',am.getAttribute('data-add')); S.openDrop=null; render(); return; }
+    const am=closest('[data-add]'); if(am){ const lbl=am.getAttribute('data-add')||''; S.openDrop=null;
+      const mode = /cookie/i.test(lbl)?'cookie' : /bulk|pass/i.test(lbl)?'userpass' : /custom|url/i.test(lbl)?'custom' : 'manual';
+      bsend({type:'add',mode}); render(); return; }
     const ob=closest('[data-ob]'); if(ob){ log('open browser →',ob.getAttribute('data-ob')); S.openDrop=null; render(); return; }
 
     // launch-bar overflow toggles
     const lt=closest('[data-tg]'); if(lt){ e.stopPropagation(); const k=lt.getAttribute('data-tg'); S[k]=!S[k]; render(); reopenDrop(); return; }
 
     // settings toggles / steppers
-    const tog=closest('[data-toggle]'); if(tog){ const k=tog.getAttribute('data-toggle'); S.toggles[k]=!S.toggles[k]; log('setting',k,'=',S.toggles[k]); render(); return; }
-    const step=closest('[data-step]'); if(step){ const k=step.getAttribute('data-step'); const d=+step.getAttribute('data-dir'); S.steppers[k]=Math.max(0,S.steppers[k]+d); render(); return; }
+    const tog=closest('[data-toggle]'); if(tog){ const k=tog.getAttribute('data-toggle'); S.toggles[k]=!S.toggles[k]; bsend({type:'setSetting',key:k,value:S.toggles[k]}); render(); return; }
+    const step=closest('[data-step]'); if(step){ const k=step.getAttribute('data-step'); const d=+step.getAttribute('data-dir'); S.steppers[k]=Math.max(0,S.steppers[k]+d); bsend({type:'setSetting',key:k,value:S.steppers[k]}); render(); return; }
 
     // appearance
-    const ac=closest('[data-accent]'); if(ac){ S.accent=ac.getAttribute('data-accent'); applyAccent(); render(); return; }
-    const den=closest('[data-density]'); if(den){ S.density=den.getAttribute('data-density'); render(); return; }
+    const ac=closest('[data-accent]'); if(ac){ S.accent=ac.getAttribute('data-accent'); applyAccent(); bsend({type:'setSetting',key:'accent',value:S.accent}); render(); return; }
+    const den=closest('[data-density]'); if(den){ S.density=den.getAttribute('data-density'); bsend({type:'setSetting',key:'density',value:S.density}); render(); return; }
 
     // checkbox toggle (select) — must beat the row-pick below
     const ck=closest('.ckbox'); if(ck){ e.stopPropagation(); const u=ck.getAttribute('data-u'); if(S.sel[u]) delete S.sel[u]; else S.sel[u]=true; render(); return; }
@@ -970,7 +977,7 @@ function handleAction(act,u,e){
     case 'saveTarget': bsend({type:'saveTarget',users:selUsers,placeId:place,jobId:job}); log('Saved target to',selUsers); S.openDrop=null; render(); break;
     case 'launchOne': bsend({type:'launch',users:[u],placeId:place,jobId:job}); log('Launch',u); break;
     case 'openBrowserOne': bsend({type:'openBrowser',users:[u]}); log('Open browser',u); break;
-    case 'utilities': S.modalUtil=u; bsend({type:'utilities',user:u}); render(); break;
+    case 'utilities': bsend({type:'utilities',user:u}); break;
     case 'removeOne': bsend({type:'remove',users:[u]}); log('Remove',u); S.detail=null; render(); break;
     case 'relaunchDisc': bsend({type:'relaunchDisconnected'}); log('Relaunch all disconnected'); break;
     case 'minAll': bsend({type:'minimizeAll'}); log('Minimize all'); break;
@@ -1008,6 +1015,29 @@ function bsend(msg){
     try{ window.chrome.webview.postMessage(JSON.stringify(msg)); }catch(e){}
   }
 }
+// Transient feedback banner (driven by the C# host so silent actions aren't silent anymore).
+function toast(msg){
+  if(!msg) return;
+  let t=document.getElementById('krToast');
+  if(!t){ t=document.createElement('div'); t.id='krToast';
+    t.style.cssText='position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#111A30;border:1px solid #2A3A63;color:#E8EDF8;font-size:12px;font-weight:600;padding:8px 16px;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.55);z-index:400;opacity:0;transition:opacity .15s;pointer-events:none;';
+    document.body.appendChild(t); }
+  t.textContent=msg; t.style.opacity='1';
+  clearTimeout(t._h); t._h=setTimeout(function(){ t.style.opacity='0'; },2000);
+}
+// Apply real settings pushed from the host into UI state (place id, toggles, steppers, accent, density).
+function applySettings(s){
+  if(!s) return;
+  window.__settings=s;
+  if(s.version) window.__ver=s.version;
+  // Seed the saved place/job only once; after that, keep whatever the user is typing (survives the 12s auto-refresh).
+  if(s.placeId!==undefined && window.__place===undefined) window.__place=s.placeId;
+  if(s.jobId!==undefined && window.__job===undefined) window.__job=s.jobId;
+  if(s.accent){ S.accent=s.accent; applyAccent(); }
+  if(s.density){ S.density=s.density; }
+  if(s.toggles) Object.assign(S.toggles, s.toggles);
+  if(s.steppers) Object.assign(S.steppers, s.steppers);
+}
 (function(){
   if(!(window.chrome && window.chrome.webview)) return; // standalone browser: keep sample data
   document.body.setAttribute('data-host','1');
@@ -1025,7 +1055,8 @@ function bsend(msg){
   window.chrome.webview.addEventListener('message', ev=>{
     let m; try{ m = typeof ev.data==='string'?JSON.parse(ev.data):ev.data; }catch(e){ return; }
     if(!m||!m.type) return;
-    if(m.type==='init'||m.type==='accounts'){ applyList(m.accounts); if(m.settings){ window.__settings=m.settings; if(m.settings.version) window.__ver=m.settings.version; } render(); }
+    if(m.type==='init'||m.type==='accounts'){ applyList(m.accounts); applySettings(m.settings); render(); }
+    else if(m.type==='toast'){ toast(m.text); }
     else if(m.type==='patch'){ // incremental: presence/status updates by username
       (m.updates||[]).forEach(up=>{ const a=byName[up.u]; if(a) Object.assign(a,up); });
       render();

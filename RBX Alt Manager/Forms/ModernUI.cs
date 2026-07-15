@@ -157,12 +157,41 @@ namespace RBX_Alt_Manager.Forms
 
         private object MapSettings()
         {
+            var g = AccountManager.General; var ac = AccountManager.AccountControl; var dev = AccountManager.Developer;
+            string GetS(IniSection f, string k, string dflt) { try { return f != null && f.Exists(k) ? f.Get(k) : dflt; } catch { return dflt; } }
+            bool GetB(IniSection f, string k) { try { return f != null && f.Get<bool>(k); } catch { return false; } }
+            int GetI(IniSection f, string k, int dflt) { try { return f != null && f.Exists(k) ? f.Get<int>(k) : dflt; } catch { return dflt; } }
             try
             {
                 return new
                 {
-                    autoRelaunch = AccountManager.AccountControl != null && AccountManager.AccountControl.Get<bool>("StartOnLaunch"),
                     version = AppVersion(),
+                    placeId = GetS(g, "SavedPlaceId", "5315046213"),
+                    jobId = GetS(g, "SavedJobId", ""),
+                    accent = GetS(g, "ModernAccent", "cyan"),
+                    density = GetS(g, "ModernDensity", "comfortable"),
+                    theme = GetS(g, "ModernTheme", "dark"),
+                    toggles = new
+                    {
+                        checkUpdates = GetB(g, "CheckForUpdates"),
+                        savePw = GetB(g, "SavePasswords"),
+                        disableAging = GetB(g, "DisableAgingAlert"),
+                        autoCookie = GetB(g, "AutoCookieRefresh"),
+                        async = GetB(g, "AsyncJoin"),
+                        shuffleLowest = GetB(g, "ShuffleChoosesLowestServer"),
+                        fpsUnlock = GetB(g, "UnlockFPS"),
+                        multiRoblox = GetB(g, "EnableMultiRbx"),
+                        webApi = GetB(dev, "EnableWebServer"),
+                        autoRelaunch = GetB(ac, "StartOnLaunch"),
+                    },
+                    steppers = new
+                    {
+                        launchDelay = GetI(g, "AccountJoinDelay", 8),
+                        maxRecent = GetI(g, "MaxRecentGames", 8),
+                        maxFps = GetI(g, "MaxFPSValue", 120),
+                        relaunchDelay = GetI(ac, "RelaunchDelay", 60),
+                        connPort = GetI(ac, "NexusPort", 5242),
+                    },
                 };
             }
             catch { return new { version = AppVersion() }; }
@@ -208,7 +237,9 @@ namespace RBX_Alt_Manager.Forms
                 bool inGame = p != null && p.userPresenceType == UserPresenceType.InGame;
                 bool client = nexus || inGame;
                 if (nexus && !string.IsNullOrEmpty(ca.InGameJobId)) job = ca.InGameJobId;
-                if (client) act = new object[] { client ? 1 : 0, nexus ? 1 : 0, 0, (!nexus && inGame) ? 0 : 0 };
+                // Show in the Active view whenever the account is tracked by Nexus (ca != null) OR has a live client,
+                // so a *disconnected* account is visible (that's the whole point of auto-reconnect) — not only connected ones.
+                if (ca != null || inGame) act = new object[] { client ? 1 : 0, nexus ? 1 : 0, 0, 0 };
             }
             catch { }
 
@@ -261,11 +292,13 @@ namespace RBX_Alt_Manager.Forms
                     case "openBrowser": HandleOpenBrowser(m); break;
                     case "utilities": HandleUtilities(m); break;
                     case "relaunch": RelaunchOne((string)m["user"]); break;
-                    case "relaunchDisconnected": Program.Logger.Info("[ModernUI] relaunchDisconnected (handled by Auto-Relaunch engine)"); break;
+                    case "relaunchDisconnected": RelaunchDisconnected(); break;
                     case "closeClient": CloseClient((string)m["user"]); break;
                     case "closeAll": CloseAllClients(); break;
                     case "minimize": case "minimizeAll": Program.Logger.Info($"[ModernUI] {type} (not yet wired)"); break;
                     case "add": HandleAdd(m); break;
+                    case "setSetting": HandleSetSetting(m); break;
+                    case "savePlace": SaveGlobalTarget((string)m["placeId"], (string)m["jobId"], true); break;
                     case "switchToClassic": SwitchToClassic(); break;
                     default: Program.Logger.Info($"[ModernUI] unhandled: {m}"); break;
                 }
@@ -299,10 +332,13 @@ namespace RBX_Alt_Manager.Forms
             long placeId = 0;
             long.TryParse((string)m["placeId"], out placeId);
             string jobId = (string)m["jobId"] ?? "";
-            if (placeId <= 0) { Program.Logger.Warn("[ModernUI] launch: invalid Place ID"); return; }
+            if (placeId <= 0) { Toast("Enter a valid Place ID"); return; }
+
+            // Remember the Place ID/Job across restarts, same as the classic UI does on launch.
+            SaveGlobalTarget(placeId.ToString(), jobId, false);
 
             var accounts = Users(m);
-            if (accounts.Count == 0) return;
+            if (accounts.Count == 0) { Toast("Select at least one account first"); return; }
 
             double delay = 8;
             try { double.TryParse(AccountManager.General?.Get("AccountJoinDelay"), out delay); } catch { }
@@ -340,28 +376,111 @@ namespace RBX_Alt_Manager.Forms
         {
             long placeId = 0; long.TryParse((string)m["placeId"], out placeId);
             string jobId = (string)m["jobId"] ?? "";
-            foreach (var a in Users(m))
+            if (placeId <= 0) { Toast("Enter a valid Place ID first"); return; }
+
+            var accounts = Users(m);
+            if (accounts.Count == 0)
             {
-                try { a.SetField("SavedPlaceId", placeId.ToString()); a.SetField("SavedJobId", jobId); } catch { }
+                // Nothing checkbox-selected: save it as the global default target (remembered next launch) instead of silently doing nothing.
+                SaveGlobalTarget(placeId.ToString(), jobId, true);
+                return;
             }
+
+            foreach (var a in accounts)
+                try { a.SetField("SavedPlaceId", placeId.ToString()); a.SetField("SavedJobId", jobId); } catch { }
             SafeSave();
+            Toast($"Saved target to {accounts.Count} account" + (accounts.Count == 1 ? "" : "s"));
+        }
+
+        // Persist the Place ID / Job as the app-wide default (mirrors the classic UI's [General] SavedPlaceId).
+        private void SaveGlobalTarget(string placeId, string jobId, bool toast)
+        {
+            try
+            {
+                AccountManager.General.Set("SavedPlaceId", placeId ?? "");
+                AccountManager.General.Set("SavedJobId", jobId ?? "");
+                AccountManager.Instance.SaveSettings();
+                if (toast) Toast("Saved as default Place ID");
+            }
+            catch (Exception ex) { Program.Logger.Error($"[ModernUI] SaveGlobalTarget: {ex}"); }
+        }
+
+        // Small transient message shown by the UI (host -> JS toast).
+        private void Toast(string text) { try { Post(new { type = "toast", text }); } catch { } }
+
+        // Persist a modern-UI setting to the right RAMSettings.ini section (keys mirror the classic Settings form).
+        private void HandleSetSetting(JObject m)
+        {
+            string key = (string)m["key"];
+            if (string.IsNullOrEmpty(key)) return;
+            JToken vt = m["value"];
+            string val = vt == null ? "" : (vt.Type == JTokenType.Boolean ? ((bool)vt ? "true" : "false") : vt.ToString());
+            try
+            {
+                switch (key)
+                {
+                    case "checkUpdates": AccountManager.General.Set("CheckForUpdates", val); break;
+                    case "savePw": AccountManager.General.Set("SavePasswords", val); break;
+                    case "disableAging": AccountManager.General.Set("DisableAgingAlert", val); break;
+                    case "async": AccountManager.General.Set("AsyncJoin", val); break;
+                    case "shuffleLowest": AccountManager.General.Set("ShuffleChoosesLowestServer", val); break;
+                    case "fpsUnlock": AccountManager.General.Set("UnlockFPS", val); break;
+                    case "multiRoblox": AccountManager.General.Set("EnableMultiRbx", val); break;
+                    case "webApi": AccountManager.Developer.Set("EnableWebServer", val); break;
+                    case "autoRelaunch": AccountManager.AccountControl.Set("StartOnLaunch", val); break;
+                    case "autoCookie":
+                        AccountManager.General.Set("AutoCookieRefresh", val);
+                        try { if (AccountManager.Instance.AutoCookieRefresh != null) AccountManager.Instance.AutoCookieRefresh.Enabled = (val == "true"); } catch { }
+                        break;
+                    case "launchDelay": AccountManager.General.Set("AccountJoinDelay", val); break;
+                    case "maxRecent": AccountManager.General.Set("MaxRecentGames", val); break;
+                    case "maxFps": AccountManager.General.Set("MaxFPSValue", val); break;
+                    case "relaunchDelay": AccountManager.AccountControl.Set("RelaunchDelay", val); break;
+                    case "connPort": AccountManager.AccountControl.Set("NexusPort", val); break;
+                    case "accent": AccountManager.General.Set("ModernAccent", val); break;
+                    case "density": AccountManager.General.Set("ModernDensity", val); break;
+                    case "theme": AccountManager.General.Set("ModernTheme", val); break;
+                    default: Program.Logger.Info($"[ModernUI] setSetting: unknown key {key}"); return;
+                }
+                AccountManager.Instance.SaveSettings();
+            }
+            catch (Exception ex) { Program.Logger.Error($"[ModernUI] setSetting {key}: {ex}"); }
+        }
+
+        // Manually relaunch every Nexus-tracked account that is currently disconnected and has a saved target.
+        private void RelaunchDisconnected()
+        {
+            try
+            {
+                int n = 0;
+                foreach (var a in AccountManager.AccountsList ?? new List<Account>())
+                {
+                    var ca = AccountControl.Instance?.Accounts?.FirstOrDefault(c => c.Username == a.Username);
+                    if (ca == null || ca.Status == AccountStatus.Online) continue;
+                    long placeId = 0; long.TryParse(a.GetField("SavedPlaceId"), out placeId);
+                    if (placeId <= 0) { long.TryParse(AccountManager.General?.Get("SavedPlaceId"), out placeId); }
+                    if (placeId <= 0) continue;
+                    string job = a.GetField("SavedJobId") ?? "";
+                    _ = a.JoinServer(placeId, job); n++;
+                }
+                Toast(n > 0 ? $"Relaunching {n} disconnected" : "No disconnected clients to relaunch");
+            }
+            catch (Exception ex) { Program.Logger.Error($"[ModernUI] relaunchDisconnected: {ex}"); }
         }
 
         private void HandleCopy(JObject m)
         {
             var a = Find((string)m["user"]);
             if (a == null) return;
-            string what = (string)m["what"] ?? "";
+            // The UI sends display labels ("Username", "User : Pass combo", "Profile URL", "User ID"); match loosely so they don't silently fail.
+            string what = ((string)m["what"] ?? "").ToLowerInvariant();
             string val = null;
-            switch (what)
-            {
-                case "username": val = a.Username; break;
-                case "password": val = a.Password; break;
-                case "combo": val = $"{a.Username}:{a.Password}"; break;
-                case "profile": val = $"https://www.roblox.com/users/{a.UserID}/profile"; break;
-                case "userid": case "userId": val = a.UserID.ToString(); break;
-            }
-            if (!string.IsNullOrEmpty(val)) { try { Clipboard.SetText(val); } catch { } }
+            if (what.Contains("combo") || what.Contains(":")) val = $"{a.Username}:{a.Password}";
+            else if (what.Contains("user") && what.Contains("id")) val = a.UserID.ToString();
+            else if (what.Contains("profile")) val = $"https://www.roblox.com/users/{a.UserID}/profile";
+            else if (what.Contains("pass")) val = a.Password;
+            else if (what.Contains("user")) val = a.Username;
+            if (!string.IsNullOrEmpty(val)) { try { Clipboard.SetText(val); Toast("Copied to clipboard"); } catch { } }
         }
 
         private void HandleOpenBrowser(JObject m)

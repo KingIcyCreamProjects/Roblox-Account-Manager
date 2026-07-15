@@ -28,6 +28,16 @@ Multiple Roblox instances are built in but [must be manually enabled](#q-how-do-
 You are welcome to edit the code and open pull requests if it'll benefit this project. Found a bug? Open an issue on this repository.
 
 ## What's new
+### v1.1.3 — Modern UI wiring
+Fixed a large batch of modern-UI controls that changed only the on-screen state without actually doing anything:
+- **Place ID is now remembered.** It loads your last-used Place ID and saves it when you launch. "Save target" now also saves a default when no account is selected (instead of silently doing nothing), and every action shows a small confirmation.
+- **Right-click → Copy** (username / password / combo / profile / user id) now works.
+- **The Add menu dropdown** items (Manual, Cookie import) now actually open.
+- **The Settings screen now persists** — toggles and numbers write to your config and load from it (a few advanced ones apply on next launch).
+- **Appearance** (accent colour) persists across restarts.
+- **Active view** now shows disconnected accounts, so auto-reconnect is visible; "Relaunch disconnected" works.
+- Utilities no longer opens two windows; the Server Browser is labelled as a sample-data preview.
+
 ### v1.1.2 — Fixes
 - Accounts you add now appear correctly in the modern UI roster (they no longer get hidden when they aren't in one of the default groups).
 - The version shown in the app now reflects the build you're actually running.
