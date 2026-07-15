@@ -121,25 +121,31 @@ namespace RBX_Alt_Manager
 
             if (!GetCSRFToken(out string Token)) return false;
 
-            RestRequest request = MakeRequest("/v1/authentication-ticket/", Method.Post).AddHeader("X-CSRF-TOKEN", Token).AddHeader("Referer", "https://www.roblox.com/games/4924922222/Brookhaven-RP");
+            RestRequest request = MakeRequest("/v1/authentication-ticket/", Method.Post)
+                .AddHeader("X-CSRF-TOKEN", Token)
+                .AddHeader("Origin", "https://www.roblox.com")
+                .AddHeader("Referer", "https://www.roblox.com/games/4924922222/Brookhaven-RP");
 
             RestResponse response = AccountManager.AuthClient.Execute(request);
 
             Parameter TicketHeader = response.Headers.FirstOrDefault(x => x.Name == "rbx-authentication-ticket");
 
-            if (TicketHeader != null)
+            if (TicketHeader != null && !string.IsNullOrEmpty((string)TicketHeader.Value))
             {
                 Ticket = (string)TicketHeader.Value;
 
                 return true;
             }
 
+            // Log Roblox's actual response so a persistent failure is diagnosable instead of a blank "invalid ticket".
+            Program.Logger.Warn($"[AuthTicket] {Username}: no ticket header [{(int)response.StatusCode} {response.StatusCode}] {response.Content}");
+
             return false;
         }
 
         public bool GetCSRFToken(out string Result)
         {
-            RestRequest request = MakeRequest("v1/authentication-ticket/", Method.Post).AddHeader("Referer", "https://www.roblox.com/games/4924922222/Brookhaven-RP");
+            RestRequest request = MakeRequest("v1/authentication-ticket/", Method.Post).AddHeader("Origin", "https://www.roblox.com").AddHeader("Referer", "https://www.roblox.com/games/4924922222/Brookhaven-RP");
 
             RestResponse response = AccountManager.AuthClient.Execute(request);
 

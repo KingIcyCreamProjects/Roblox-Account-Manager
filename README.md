@@ -28,6 +28,15 @@ Multiple Roblox instances are built in but [must be manually enabled](#q-how-do-
 You are welcome to edit the code and open pull requests if it'll benefit this project. Found a bug? Open an issue on this repository.
 
 ## What's new
+### v1.1.6 — Launch "Invalid Authentication Ticket" fix
+- Fixed launches failing with **"Invalid Authentication Ticket … Roblox has probably signed you out"** even right after signing in. Roblox now requires an `Origin` header on the authentication-ticket request; it's now sent. If a launch still can't get a ticket, the exact Roblox response is written to `log.txt` for diagnosis.
+
+### v1.1.5 — Scrolling, settings layout & context menu
+- Account list scrolls correctly through all groups; the periodic refresh no longer resets your scroll position or closes menus.
+- Settings/Appearance are centered and aligned, and no longer jump to the top when you change a setting.
+- Right-click **Remove Account** / **Quick Log In** now work (were silently doing nothing).
+- Opening an account's detail panel no longer squeezes the list into overlapping columns.
+
 ### v1.1.4 — Launch feedback
 - **Launch now tells you what happened.** If nothing opens, you get a message with the reason (e.g. an expired cookie, or "a Roblox client is already open — enable Multi-Roblox"). Previously a failed launch was completely silent.
 - **Multi-Roblox** toggled in the modern UI now takes effect immediately.
