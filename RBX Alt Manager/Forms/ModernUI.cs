@@ -289,6 +289,7 @@ namespace RBX_Alt_Manager.Forms
                     case "setGroup": SetField(m, a => a.Group = string.IsNullOrEmpty((string)m["value"]) ? "Default" : (string)m["value"]); break;
                     case "saveTarget": HandleSaveTarget(m); break;
                     case "copy": HandleCopy(m); break;
+                    case "ctx": HandleCtx(m); break;
                     case "openBrowser": HandleOpenBrowser(m); break;
                     case "utilities": HandleUtilities(m); break;
                     case "relaunch": RelaunchOne((string)m["user"]); break;
@@ -377,6 +378,28 @@ namespace RBX_Alt_Manager.Forms
             if (placeId <= 0) { Program.Logger.Info($"[ModernUI] relaunch {user}: no saved place"); return; }
             string job = ""; try { job = a.GetField("SavedJobId") ?? ""; } catch { }
             _ = a.JoinServer(placeId, job);
+        }
+
+        // Right-click context-menu actions (the JS sends {type:"ctx",action,user}). These were previously unhandled,
+        // so "Remove Account" / "Quick Log In" from the right-click menu did nothing.
+        private void HandleCtx(JObject m)
+        {
+            string action = (string)m["action"];
+            var a = Find((string)m["user"]);
+            if (a == null) return;
+            switch (action)
+            {
+                case "remove":
+                    AccountManager.AccountsList.Remove(a);
+                    SafeSave();
+                    PushAccounts("accounts");
+                    Toast($"Removed {a.Username}");
+                    break;
+                case "quicklogin":
+                    try { AccountManager.Instance.ModernOpenBrowser(a); } catch (Exception ex) { Program.Logger.Error($"[ModernUI] quicklogin: {ex}"); }
+                    break;
+                default: Program.Logger.Info($"[ModernUI] ctx: unhandled action {action}"); break;
+            }
         }
 
         private void HandleRemove(JObject m)
