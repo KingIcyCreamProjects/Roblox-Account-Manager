@@ -31,7 +31,7 @@
   .primaryBtn:hover{filter:brightness(1.12);}
   .menuItem:hover{background:rgba(53,200,245,.1)!important;}
   .menuItemDanger:hover{background:rgba(244,87,77,.1)!important;}
-  .app{width:100%;height:100vh;display:flex;flex-direction:column;background:var(--bg-app);overflow:hidden;min-width:1180px;}
+  .app{width:100%;height:100vh;display:flex;flex-direction:column;background:var(--bg-app);overflow:hidden;min-width:700px;}
   .navItem{position:relative;display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:6px;cursor:pointer;color:var(--tx-2);font-size:12.5px;font-weight:600;}
   .navItem .navHi{position:absolute;inset:0;background:rgba(53,200,245,.10);border-radius:6px;border-left:2px solid var(--cyan);pointer-events:none;}
   .ghostBtn{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--tx-mid);border:1px solid var(--bd-mid);border-radius:6px;padding:4px 9px;cursor:pointer;}
@@ -220,11 +220,7 @@ function titleBar(){
         <span class="mono" style="font-size:10px;border:1px solid var(--bd-mid);border-radius:3px;padding:0 4px;color:var(--tx-dim);">Ctrl K</span>
       </div>
     </div>
-    <div style="display:flex;align-items:center;height:100%;">
-      <div class="winbtn" style="width:44px;height:100%;display:flex;align-items:center;justify-content:center;cursor:pointer;">${icon('min',11,'#93A0BF',1.4).replace('viewBox="0 0 16 16"','viewBox="0 0 12 12"')}</div>
-      <div class="winbtn" style="width:44px;height:100%;display:flex;align-items:center;justify-content:center;cursor:pointer;"><svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="#93A0BF" stroke-width="1.4"><rect x="1.5" y="1.5" width="9" height="9" rx="1"/></svg></div>
-      <div class="winbtnClose" style="width:44px;height:100%;display:flex;align-items:center;justify-content:center;cursor:pointer;"><svg width="11" height="11" viewBox="0 0 12 12" stroke="#93A0BF" stroke-width="1.4"><path d="M1.5 1.5 L10.5 10.5 M10.5 1.5 L1.5 10.5"/></svg></div>
-    </div>
+    <div style="width:12px;flex:none;"></div>
   </div>`;
 }
 
@@ -310,7 +306,7 @@ function accToolbar(total,inGame){
   return `
   <div style="flex:none;display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--bd);position:relative;z-index:20;">
     <span class="ck" style="font-weight:600;font-size:15px;letter-spacing:.02em;">Accounts</span>
-    <span style="font-size:11px;color:var(--tx-dim);">${total} accounts · ${inGame} in game</span>
+    <span style="font-size:11px;color:var(--tx-dim);white-space:nowrap;">${total} · ${inGame} live</span>
     <div style="width:1px;height:18px;background:var(--bd-mid);margin:0 4px;"></div>
     <div class="dropWrap" style="position:relative;">
       <div class="ghostBtn" data-drop="groupFilter">Group: ${S.groupFilter} ${icon('chev',8,'#5C6A8C',1.5)}</div>
@@ -327,7 +323,7 @@ function accToolbar(total,inGame){
     </div>
     <div style="width:1px;height:18px;background:var(--bd-mid);margin:0 2px;"></div>
     <div style="display:flex;position:relative;">
-      <div class="primaryBtn" data-act="addManual" style="display:flex;align-items:center;gap:6px;background:linear-gradient(135deg,var(--accent1),var(--accent2));color:#04121F;font-weight:700;font-size:12px;padding:5px 12px;border-radius:6px 0 0 6px;cursor:pointer;"><svg width="11" height="11" viewBox="0 0 12 12" stroke="#04121F" stroke-width="1.8" fill="none"><path d="M6 1.5 V10.5 M1.5 6 H10.5"/></svg>Add Account</div>
+      <div class="primaryBtn" data-act="addManual" style="display:flex;align-items:center;gap:6px;background:linear-gradient(135deg,var(--accent1),var(--accent2));color:#04121F;font-weight:700;font-size:12px;padding:5px 12px;border-radius:6px 0 0 6px;cursor:pointer;"><svg width="11" height="11" viewBox="0 0 12 12" stroke="#04121F" stroke-width="1.8" fill="none"><path d="M6 1.5 V10.5 M1.5 6 H10.5"/></svg>Add</div>
       <div class="primaryBtn" data-drop="addMenu" style="display:flex;align-items:center;background:linear-gradient(135deg,#25B7DB,#2578E0);padding:5px 7px;border-radius:0 6px 6px 0;border-left:1px solid rgba(4,18,31,.25);cursor:pointer;"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#04121F" stroke-width="1.8"><path d="M2 3.5 L5 6.5 L8 3.5"/></svg></div>
       <div class="dropMenu" data-menu="addMenu" style="display:none;width:240px;">
         ${addMenuItem('globe','Manual Login','Sign in via embedded browser')}
@@ -335,16 +331,6 @@ function accToolbar(total,inGame){
         ${addMenuItem('search','Cookie(s) Import','.ROBLOSECURITY, one per line')}
         <div style="height:1px;background:var(--bd-mid);margin:4px 6px;"></div>
         ${addMenuItem('browser','Custom URL + JS','Advanced automated login')}
-      </div>
-    </div>
-    <div class="ghostBtn" data-act="removeSel">${icon('trash',11,'currentColor',1.4)}Remove</div>
-    <div style="display:flex;position:relative;">
-      <div class="ghostBtn" data-act="openBrowser" style="border-radius:6px 0 0 6px;">${icon('browser',12,'currentColor',1.4)}Open Browser</div>
-      <div class="ghostBtn" data-drop="openBrowserMenu" style="border-left:none;border-radius:0 6px 6px 0;padding:4px 6px;">${icon('chev',9,'currentColor',1.6)}</div>
-      <div class="dropMenu" data-menu="openBrowserMenu" style="display:none;width:180px;">
-        <div class="menuItem obItem" data-ob="URL" style="padding:7px 10px;border-radius:5px;cursor:pointer;font-size:12px;">Open URL</div>
-        <div class="menuItem obItem" data-ob="URL+JS" style="padding:7px 10px;border-radius:5px;cursor:pointer;font-size:12px;">Open URL + JS</div>
-        <div class="menuItem obItem" data-ob="JoinGroup" style="padding:7px 10px;border-radius:5px;cursor:pointer;font-size:12px;">Join Group</div>
       </div>
     </div>
   </div>`;

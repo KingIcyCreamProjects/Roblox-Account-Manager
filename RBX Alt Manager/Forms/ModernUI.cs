@@ -25,6 +25,9 @@ namespace RBX_Alt_Manager.Forms
         public static ModernUI Instance;
         private static bool Launched;
 
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, int[] attrValue, int attrSize);
+
         private WebView2 web;
         private Form owner;
         private System.Windows.Forms.Timer pushTimer;
@@ -58,13 +61,15 @@ namespace RBX_Alt_Manager.Forms
             try { Icon = Properties.Resources.team_KX4_icon; } catch { }
             BackColor = Color.FromArgb(7, 11, 20);
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(1320, 820);
-            MinimumSize = new Size(1000, 640);
+            // Compact "little app" footprint like the original RAM — not a full-window app.
+            ClientSize = new Size(920, 560);
+            MinimumSize = new Size(800, 460);
 
             web = new WebView2 { Dock = DockStyle.Fill };
             Controls.Add(web);
 
-            Load += async (s, e) => await InitAsync();
+            HandleCreated += (s, e) => ApplyDarkTitleBar();
+            Load += async (s, e) => { ApplyDarkTitleBar(); await InitAsync(); };
             FormClosed += (s, e) => { try { Application.Exit(); } catch { } };
         }
 
@@ -109,6 +114,13 @@ namespace RBX_Alt_Manager.Forms
                 try { pushTimer?.Stop(); } catch { }
                 Close();
             }
+        }
+
+        // Dark native title bar (kills the white Windows title bar). Try attr 19 (older builds) then 20.
+        private void ApplyDarkTitleBar()
+        {
+            try { if (DwmSetWindowAttribute(Handle, 19, new[] { 1 }, 4) != 0) DwmSetWindowAttribute(Handle, 20, new[] { 1 }, 4); }
+            catch { }
         }
 
         private string LoadHtml()
