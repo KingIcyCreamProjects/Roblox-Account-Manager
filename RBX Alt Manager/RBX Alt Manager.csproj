@@ -124,6 +124,17 @@
     <Reference Include="CefSharp.WinForms, Version=109.1.110.0, Culture=neutral, PublicKeyToken=40c4b6fc221f4138, processorArchitecture=MSIL">
       <HintPath>..\packages\CefSharp.WinForms.109.1.110\lib\net462\CefSharp.WinForms.dll</HintPath>
     </Reference>
+    <Reference Include="Microsoft.Web.WebView2.Core, Version=1.0.2210.55, Culture=neutral, PublicKeyToken=2a8ab48044d2601e, processorArchitecture=MSIL">
+      <HintPath>..\packages\Microsoft.Web.WebView2.1.0.2210.55\lib\net45\Microsoft.Web.WebView2.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Web.WebView2.WinForms, Version=1.0.2210.55, Culture=neutral, PublicKeyToken=2a8ab48044d2601e, processorArchitecture=MSIL">
+      <HintPath>..\packages\Microsoft.Web.WebView2.1.0.2210.55\lib\net45\Microsoft.Web.WebView2.WinForms.dll</HintPath>
+    </Reference>
+    <None Include="..\packages\Microsoft.Web.WebView2.1.0.2210.55\runtimes\win-x86\native\WebView2Loader.dll">
+      <Link>WebView2Loader.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <EmbeddedResource Include="Web\ui.html" />
     <Reference Include="Costura, Version=5.7.0.0, Culture=neutral, processorArchitecture=MSIL">
       <HintPath>..\packages\Costura.Fody.5.7.0\lib\netstandard1.0\Costura.dll</HintPath>
     </Reference>
@@ -411,6 +422,9 @@
     <Compile Include="Classes\Utilities.cs" />
     <Compile Include="Classes\WM.cs" />
     <None Include="DO NOT UPGRADE CEFSHARP - BREAKS FOR WIN7.note" />
+    <Compile Include="Forms\ModernUI.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="Forms\MissingAssets.cs">
       <SubType>Form</SubType>
     </Compile>

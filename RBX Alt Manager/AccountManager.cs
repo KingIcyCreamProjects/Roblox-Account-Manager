@@ -165,8 +165,12 @@ namespace RBX_Alt_Manager
             if (!AccountControl.Exists("LauncherDelayNumber")) AccountControl.Set("LauncherDelayNumber", "9");
             if (!AccountControl.Exists("NexusPort")) AccountControl.Set("NexusPort", "5242");
 
+            if (!General.Exists("UseModernUI")) General.Set("UseModernUI", "true"); // WebView2 redesign; classic UI is the fallback
+
             InitializeComponent();
             this.Rescale();
+
+            Shown += (s, e) => MaybeLaunchModern();
 
             AccountsList = new List<Account>();
             SelectedAccounts = new List<Account>();
@@ -354,6 +358,22 @@ namespace RBX_Alt_Manager
                     if (account.LastUse > LastValidAccount.LastUse)
                         LastValidAccount = account;
             }
+
+            MaybeLaunchModern(); // accounts are loaded now (covers the post-unlock path; no-op if the form isn't shown yet)
+        }
+
+        // Launch the modern WebView2 UI once accounts are loaded (not while the password/encryption panel is up).
+        // Gated by the UseModernUI setting; ModernUI.Launch falls back to this classic window if WebView2 fails.
+        private void MaybeLaunchModern()
+        {
+            try
+            {
+                if (!IsHandleCreated) return;
+                if (PasswordPanel != null && PasswordPanel.Visible) return;
+                if (General == null || !General.Get<bool>("UseModernUI")) return;
+                RBX_Alt_Manager.Forms.ModernUI.Launch(this);
+            }
+            catch (Exception ex) { Program.Logger.Error($"MaybeLaunchModern: {ex}"); }
         }
 
         public static void SaveAccounts(bool BypassRateLimit = false, bool BypassCountCheck = false)
