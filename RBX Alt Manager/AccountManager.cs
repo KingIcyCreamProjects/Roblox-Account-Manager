@@ -178,6 +178,34 @@ namespace RBX_Alt_Manager
 
             DonateButton.Visible = false; // was ic3w0lf22's donate page; no fork donate page
 
+            // Visible "switch to the new UI" button in the top strip (so it's not buried in Settings).
+            try
+            {
+                var NewUIButton = new Button
+                {
+                    Text = "✦ New UI",
+                    Size = new System.Drawing.Size(74, 22),
+                    Location = new System.Drawing.Point(610, 5),
+                    FlatStyle = FlatStyle.Flat,
+                    UseVisualStyleBackColor = false,
+                    BackColor = System.Drawing.Color.FromArgb(18, 28, 48),
+                    ForeColor = System.Drawing.Color.FromArgb(53, 200, 245),
+                    Font = new System.Drawing.Font("Segoe UI", 8.25f, System.Drawing.FontStyle.Bold),
+                    TabStop = false,
+                    Cursor = Cursors.Hand
+                };
+                NewUIButton.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(53, 200, 245);
+                NewUIButton.Click += (s, e) =>
+                {
+                    General.Set("UseModernUI", "true");
+                    SaveSettings();
+                    RBX_Alt_Manager.Forms.ModernUI.Launch(this);
+                };
+                Controls.Add(NewUIButton);
+                NewUIButton.BringToFront();
+            }
+            catch (Exception ex) { Program.Logger.Error($"NewUIButton: {ex}"); }
+
             AccountsList = new List<Account>();
             SelectedAccounts = new List<Account>();
 
