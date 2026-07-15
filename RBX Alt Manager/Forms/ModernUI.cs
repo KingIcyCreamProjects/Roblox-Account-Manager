@@ -162,9 +162,21 @@ namespace RBX_Alt_Manager.Forms
                 return new
                 {
                     autoRelaunch = AccountManager.AccountControl != null && AccountManager.AccountControl.Get<bool>("StartOnLaunch"),
+                    version = AppVersion(),
                 };
             }
-            catch { return new { }; }
+            catch { return new { version = AppVersion() }; }
+        }
+
+        // Single source of truth for the displayed version = the exe's AssemblyFileVersion (e.g. "1.1.2").
+        private static string AppVersion()
+        {
+            try
+            {
+                var fvi = FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location);
+                return $"{fvi.FileMajorPart}.{fvi.FileMinorPart}.{fvi.FileBuildPart}";
+            }
+            catch { return "1.1"; }
         }
 
         private object MapAccount(Account a)

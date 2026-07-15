@@ -212,7 +212,7 @@ function titleBar(){
       ${crownSvg(-4,-3,10,7)}
     </div>
     <span class="ck" style="font-weight:600;font-size:13px;letter-spacing:.06em;">KINGSRAM</span>
-    <span style="font-size:11px;color:var(--tx-dim);border:1px solid var(--bd-mid);border-radius:4px;padding:1px 6px;">v1.0</span>
+    <span style="font-size:11px;color:var(--tx-dim);border:1px solid var(--bd-mid);border-radius:4px;padding:1px 6px;">v${(window.__ver||'1.1')}</span>
     <div style="flex:1;display:flex;justify-content:center;">
       <div class="hoverBorder" style="display:flex;align-items:center;gap:8px;background:#0B1120;border:1px solid var(--bd-mid);border-radius:6px;padding:4px 10px;width:340px;">
         ${icon('search',12,'#5C6A8C',1.6)}
@@ -270,8 +270,14 @@ function filteredAccounts(){
     return true;
   });
 }
+// Group order = known sample groups first, then any real groups present (e.g. host accounts in "Default").
+// Without this, host-provided accounts whose group isn't a hardcoded sample name render in no group at all.
+function groupNames(){
+  const present=[]; ACCOUNTS.forEach(a=>{ if(!present.includes(a.grp)) present.push(a.grp); });
+  return [...GROUP_ORDER.filter(g=>present.includes(g)), ...present.filter(g=>!GROUP_ORDER.includes(g))];
+}
 function groupsFor(list){
-  return GROUP_ORDER.map(name=>{
+  return groupNames().map(name=>{
     const rows=list.filter(a=>a.grp===name);
     const live=rows.filter(a=>a.st==='ingame').length;
     return {name,rows,open:!S.collapsed[name],live,count:rows.length};
@@ -300,7 +306,7 @@ function screenAccounts(){
 }
 
 function accToolbar(total,inGame){
-  const grpOpts=['All',...GROUP_ORDER];
+  const grpOpts=['All',...groupNames()];
   const stOpts=[['All','All'],['ingame','In game'],['web','Online'],['studio','In studio'],['offline','Offline']];
   const stLabel = stOpts.find(o=>o[0]===S.statusFilter)[1];
   return `
@@ -784,7 +790,7 @@ function overlays(){
         <div class="ctxGroups" style="position:relative;display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:5px;cursor:pointer;${S.ctxSub==='groups'?'background:rgba(53,200,245,.08);':''}">${icon('users',12,'#93A0BF',1.3)}Groups <span style="margin-left:auto;color:var(--tx-dim);">&#9656;</span>
           ${S.ctxSub==='groups'?`<div style="position:absolute;left:calc(100% + 4px);top:-5px;width:160px;background:var(--surface-raised);border:1px solid #24335A;border-radius:8px;box-shadow:0 14px 38px rgba(0,0,0,.55);padding:5px;">
             <div style="padding:4px 9px;font-size:10px;color:var(--tx-dim);letter-spacing:.08em;">MOVE TO</div>
-            ${GROUP_ORDER.map(g=>`<div class="menuItem ctxMove" data-grp="${g}" style="padding:5px 9px;border-radius:5px;cursor:pointer;${a.grp===g?'color:var(--cyan);':''}">${g}${a.grp===g?' &#10003;':''}</div>`).join('')}
+            ${groupNames().map(g=>`<div class="menuItem ctxMove" data-grp="${g}" style="padding:5px 9px;border-radius:5px;cursor:pointer;${a.grp===g?'color:var(--cyan);':''}">${g}${a.grp===g?' &#10003;':''}</div>`).join('')}
           </div>`:''}
         </div>
         <div style="height:1px;background:var(--bd-mid);margin:4px 6px;"></div>
@@ -1019,7 +1025,7 @@ function bsend(msg){
   window.chrome.webview.addEventListener('message', ev=>{
     let m; try{ m = typeof ev.data==='string'?JSON.parse(ev.data):ev.data; }catch(e){ return; }
     if(!m||!m.type) return;
-    if(m.type==='init'||m.type==='accounts'){ applyList(m.accounts); if(m.settings) window.__settings=m.settings; render(); }
+    if(m.type==='init'||m.type==='accounts'){ applyList(m.accounts); if(m.settings){ window.__settings=m.settings; if(m.settings.version) window.__ver=m.settings.version; } render(); }
     else if(m.type==='patch'){ // incremental: presence/status updates by username
       (m.updates||[]).forEach(up=>{ const a=byName[up.u]; if(a) Object.assign(a,up); });
       render();

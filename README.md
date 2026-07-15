@@ -28,6 +28,11 @@ Multiple Roblox instances are built in but [must be manually enabled](#q-how-do-
 You are welcome to edit the code and open pull requests if it'll benefit this project. Found a bug? Open an issue on this repository.
 
 ## What's new
+### v1.1.2 — Fixes
+- Accounts you add now appear correctly in the modern UI roster (they no longer get hidden when they aren't in one of the default groups).
+- The version shown in the app now reflects the build you're actually running.
+- Auto-update reliability fixes.
+
 ### v1.1 — Modern interface
 - A completely redesigned dark UI: a sidebar (Accounts / Active / Server Browser / Settings / Appearance), a grouped account roster with clear status badges, and a compact windowed layout.
 - New **Active Accounts** view — see which accounts are live / in-game at a glance.
