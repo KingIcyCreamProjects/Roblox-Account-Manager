@@ -105,11 +105,28 @@ public static Color Lerp(this Color s, Color t, float k)
 
     public static double ToRobloxTick(this DateTime Date) => ((Date - Epoch).Ticks / TimeSpan.TicksPerSecond) + ((double)Date.Millisecond / 1000);
 
+    private static readonly Dictionary<int, string> CommandLineCache = new Dictionary<int, string>();
+    private static readonly object CommandLineCacheLock = new object();
+
     public static string GetCommandLine(this Process process)
     {
-        using ManagementObjectSearcher searcher = new ManagementObjectSearcher("SELECT CommandLine FROM Win32_Process WHERE ProcessId = " + process.Id);
-        using ManagementObjectCollection objects = searcher.Get();
-        return objects.Cast<ManagementBaseObject>().SingleOrDefault()?["CommandLine"]?.ToString();
+        // A process's command line is fixed for its lifetime, so cache it per-PID: the WMI query (~5-50ms) was
+        // running per-process on every watcher tick and ~130× per launch in the 350ms window-position poll.
+        lock (CommandLineCacheLock)
+            if (CommandLineCache.TryGetValue(process.Id, out string Cached))
+                return Cached;
+
+        string CommandLine;
+
+        using (ManagementObjectSearcher searcher = new ManagementObjectSearcher("SELECT CommandLine FROM Win32_Process WHERE ProcessId = " + process.Id))
+        using (ManagementObjectCollection objects = searcher.Get())
+            CommandLine = objects.Cast<ManagementBaseObject>().SingleOrDefault()?["CommandLine"]?.ToString();
+
+        // Only cache a real result — a null is likely a transient WMI hiccup or a not-yet-ready process; don't pin it.
+        if (!string.IsNullOrEmpty(CommandLine))
+            lock (CommandLineCacheLock) CommandLineCache[process.Id] = CommandLine;
+
+        return CommandLine;
     }
 
     public static async Task<string> GetRandomJobId(long PlaceId, bool ChooseLowestServer = false)
@@ -318,16 +335,31 @@ public static class ImageExtensions
     {
         Bitmap Image = control.GetImage(out PropertyInfo ImageProperty);
 
-        for (int x = 0; x < Image.Width; x++)
-            for (int y = 0; y < Image.Height; y++)
+        if (Image == null) return;
+
+        // Recolor via LockBits + one bulk Marshal.Copy instead of GetPixel/SetPixel per pixel (which locks/unlocks
+        // the bitmap on every call — 10-100× slower). 32bppArgb is laid out B,G,R,A in memory.
+        Rectangle Rect = new Rectangle(0, 0, Image.Width, Image.Height);
+        System.Drawing.Imaging.BitmapData Data = Image.LockBits(Rect, System.Drawing.Imaging.ImageLockMode.ReadWrite, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+
+        try
+        {
+            int Count = Math.Abs(Data.Stride) * Image.Height;
+            byte[] Buffer = new byte[Count];
+            Marshal.Copy(Data.Scan0, Buffer, 0, Count);
+
+            for (int i = 0; i < Count; i += 4)
             {
-                Color Pixel = Image.GetPixel(x, y);
+                if (Buffer[i + 3] == 0) continue; // fully transparent — leave it
 
-                if (Pixel.A == 0) continue;
-
-                Pixel = Color.FromArgb(Pixel.A, R, G, B);
-                Image.SetPixel(x, y, Pixel);
+                Buffer[i] = (byte)B;
+                Buffer[i + 1] = (byte)G;
+                Buffer[i + 2] = (byte)R;
             }
+
+            Marshal.Copy(Buffer, 0, Data.Scan0, Count);
+        }
+        finally { Image.UnlockBits(Data); }
 
         ImageProperty.SetValue(control, Image); // Required for some controls
     }

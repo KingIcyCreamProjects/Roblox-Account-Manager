@@ -71,11 +71,12 @@ namespace RBX_Alt_Manager
         private static readonly Mutex mutex = new Mutex(true, "{93b3858f-3dac-4dc0-99cb-0476efc5adce}");
 #endif
 
+        // Exit code returned when the app is run from inside a temp/archive folder without being extracted.
+        private const int ExitCodeNotExtracted = 1337;
+
         [STAThread]
         static void Main(params string[] Arguments)
         {
-            int Stupid = 1337;
-
             try { SetDllDirectory(CefDirectory); } catch { } // let libcef.dll load from the bin subfolder if present
 
             try
@@ -83,7 +84,7 @@ namespace RBX_Alt_Manager
                 if (Directory.GetParent(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)).FullName.Contains(Path.GetTempPath().Remove(Path.GetTempPath().Length - 1)))
                 {
                     MessageBox.Show("KingsRAM must be extracted in order to function correctly!", "KingsRAM", MessageBoxButtons.OK);
-                    Environment.Exit(Stupid);
+                    Environment.Exit(ExitCodeNotExtracted);
                 }
             }
             catch { }

@@ -57,7 +57,7 @@ namespace RBX_Alt_Manager.Classes
             if (string.IsNullOrEmpty(Url)) Url = "https://roblox.com/";
 
             if (Position != null && Index >= 0 && ScreenGrid != null && ScreenGrid.Count > 0)
-                Position = ScreenGrid[Index % (ScreenGrid.Count - 1)];
+                Position = ScreenGrid[Index % ScreenGrid.Count]; // was % (Count-1): DivideByZero at Count==1, and skipped the last cell
             else
                 Position = new Vector2(Screen.PrimaryScreen.WorkingArea.Width / 2 - (Size.X / 2), Screen.PrimaryScreen.WorkingArea.Height / 2 - (Size.Y / 2));
 

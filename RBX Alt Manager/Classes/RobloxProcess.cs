@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -20,13 +21,20 @@ namespace RBX_Alt_Manager.Classes
         private bool IsDMPaused;
         private bool StreamDisposed;
         private bool IsConnected;
+        private bool Exited; // guards the WaitForExitTimer teardown against re-entry
         private DateTime DisconnectedTime;
         private string LastLine;
         private System.Timers.Timer WaitForExitTimer;
 
         const string TimestampRegex = @"[\d+\-]+T[\d+:]+\.\w+Z,[\d.+]+,\w+,\d+[\s+]?";
 
-        private static readonly Dictionary<string, string> Matches = new Dictionary<string, string>{
+        // Compiled once — matched against every log line on the 250ms ReadLogFile tick (was rebuilt per line before).
+        private static readonly Regex JoiningGameRegex = new Regex($@"^{TimestampRegex}\[FLog::Output\] ! Joining game '[\w+\-]{{36}}' place \d+ at [\d+\.]+", RegexOptions.Compiled);
+        private static readonly Regex DisconnectRegex = new Regex($@"^{TimestampRegex}\[FLog::Network\] Sending disconnect with reason: (\d+)", RegexOptions.Compiled);
+
+        // ConcurrentDictionary: UpdateMatches (startup GitHub fetch) writes while ReadLogFile reads on the 250ms
+        // timer. A plain Dictionary can tear its buckets under concurrent add+read and crash or spin.
+        private static readonly ConcurrentDictionary<string, string> Matches = new ConcurrentDictionary<string, string>(new Dictionary<string, string>{
             { "DataModelInit", @"\[FLog::UGCGameController\] UGCGameController, initialized DataModel\((\w+)\)" },
             { "DataModelInit2", @"\[FLog::SurfaceController\] SurfaceController\[_:1\]::start dataModel\((\w+)\)" },
             { "DataModelStop", @"\[FLog::UGCGameController\] UGCGameController::leave \(blocking:\d+\) dataModel\((\w+)\)" },
@@ -34,7 +42,7 @@ namespace RBX_Alt_Manager.Classes
             { "DataModelPause", @"\[FLog::SurfaceController\] SurfaceController\[_:1\]::pause dataModel\((\w+)\), view\(\w+\), destroyView:\d+\." },
             { "ReturnToApp1", @"\[FLog::SingleSurfaceApp\] returnToLuaApp: \.\.\. App not yet initialized, returning from game\." },
             { "ReturnToApp2", @"\[FLog::SingleSurfaceApp\] returnToLuaApp: \.\.\. App has been initialized, returning from game\." }
-        };
+        });
 
         public static async void UpdateMatches()
         {
@@ -51,9 +59,7 @@ namespace RBX_Alt_Manager.Classes
                         string Name = Line.Substring(0, Split);
                         string Value = Line.Substring(Split + 1);
 
-                        if (Matches.ContainsKey(Name)) Matches.Remove(Name);
-
-                        Matches.Add(Name, Value);
+                        Matches[Name] = Value; // atomic add-or-update
                     }
                 }
             }
@@ -86,7 +92,15 @@ namespace RBX_Alt_Manager.Classes
                     if (!RbxProcess.HasExited && !Program.Closed)
                         return;
 
+                    if (Exited) return; // teardown already ran on a previous tick
+                    Exited = true;
+
                     Program.Logger.Info($"{RbxProcess.Id} has exited");
+
+                    // Stop the timer and mark the stream disposed BEFORE disposing it, so a ReadLogFile tick
+                    // that's mid-flight (or the next scheduled one) bails instead of touching a disposed stream.
+                    StreamDisposed = true;
+                    WaitForExitTimer?.Stop();
 
                     RobloxWatcher.LogFileRead -= ReadLogFile;
 
@@ -124,14 +138,14 @@ namespace RBX_Alt_Manager.Classes
                     {
                         string Line = Lines[i];
 
-                        if (Regex.IsMatch(Line, $@"^{TimestampRegex}\[FLog::Output\] ! Joining game '[\w+\-]{{36}}' place \d+ at [\d+\.]+"))
+                        if (JoiningGameRegex.IsMatch(Line))
                         {
                             IsConnected = true;
 
                             continue;
                         }
 
-                        if (Regex.IsMatch(Line, $@"^{TimestampRegex}\[FLog::Network\] Sending disconnect with reason: (\d+)"))
+                        if (DisconnectRegex.IsMatch(Line))
                         {
                             IsConnected = false;
                             DisconnectedTime = DateTime.Now;

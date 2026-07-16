@@ -43,6 +43,9 @@ namespace RBX_Alt_Manager
         [DllImport("user32.dll", SetLastError = true)]
         static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
 
+        // Compiled once; matched against every RobloxPlayerBeta command line on the 350ms window-position poll.
+        private static readonly Regex TrackerRegex = new Regex(@"\-b (\d+)", RegexOptions.Compiled);
+
         public int CompareTo(Account compareTo)
         {
             if (compareTo == null)
@@ -58,11 +61,11 @@ namespace RBX_Alt_Manager
             get => _Alias;
             set
             {
-                if (value == null || value.Length > 50)
+                if (value == null || value.Length > 50 || value == _Alias) // skip no-op saves
                     return;
 
                 _Alias = value;
-                AccountManager.SaveAccounts();
+                AccountManager.SaveAccountsDebounced();
             }
         }
         public string Description
@@ -70,11 +73,11 @@ namespace RBX_Alt_Manager
             get => _Description;
             set
             {
-                if (value == null || value.Length > 5000)
+                if (value == null || value.Length > 5000 || value == _Description)
                     return;
 
                 _Description = value;
-                AccountManager.SaveAccounts();
+                AccountManager.SaveAccountsDebounced();
             }
         }
         public string Password
@@ -82,11 +85,11 @@ namespace RBX_Alt_Manager
             get => _Password;
             set
             {
-                if (value == null || value.Length > 5000)
+                if (value == null || value.Length > 5000 || value == _Password)
                     return;
 
                 _Password = value;
-                AccountManager.SaveAccounts();
+                AccountManager.SaveAccountsDebounced();
             }
         }
 
@@ -574,7 +577,7 @@ namespace RBX_Alt_Manager
                     {
                         foreach(Process proc in Process.GetProcessesByName("RobloxPlayerBeta"))
                         {
-                            var TrackerMatch = Regex.Match(proc.GetCommandLine(), @"\-b (\d+)");
+                            var TrackerMatch = TrackerRegex.Match(proc.GetCommandLine());
                             string TrackerID = TrackerMatch.Success ? TrackerMatch.Groups[1].Value : string.Empty;
 
                             if (TrackerID == BrowserTrackerID)
@@ -748,7 +751,7 @@ namespace RBX_Alt_Manager
 
                     string CommandLine = process.GetCommandLine();
 
-                    var TrackerMatch = Regex.Match(CommandLine, @"\-b (\d+)");
+                    var TrackerMatch = TrackerRegex.Match(CommandLine);
                     string TrackerID = TrackerMatch.Success ? TrackerMatch.Groups[1].Value : string.Empty;
 
                     if (TrackerID != BrowserTrackerID) continue;
@@ -876,8 +879,15 @@ namespace RBX_Alt_Manager
         }
 
         public string GetField(string Name) => Fields.ContainsKey(Name) ? Fields[Name] : string.Empty;
-        public void SetField(string Name, string Value) { Fields[Name] = Value; AccountManager.SaveAccounts(); }
-        public void RemoveField(string Name) { Fields.Remove(Name); AccountManager.SaveAccounts(); }
+        // Debounced + change-checked: RobloxWatcher writes Window_Position_X/Y/Width/Height (4 calls) every tick;
+        // this collapses that burst into a single coalesced write instead of 4 full serialise+encrypt cycles.
+        public void SetField(string Name, string Value)
+        {
+            if (Fields.TryGetValue(Name, out string Existing) && Existing == Value) return;
+            Fields[Name] = Value;
+            AccountManager.SaveAccountsDebounced();
+        }
+        public void RemoveField(string Name) { if (Fields.Remove(Name)) AccountManager.SaveAccountsDebounced(); }
     }
 
     public class AccountJson

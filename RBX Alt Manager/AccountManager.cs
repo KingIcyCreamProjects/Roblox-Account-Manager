@@ -83,6 +83,14 @@ namespace RBX_Alt_Manager
         private static Mutex rbxMultiMutex;
         private readonly static object saveLock = new object();
         private readonly static object rgSaveLock = new object();
+        // Guards every STRUCTURAL mutation of AccountsList (Add/Remove/Insert/reassign) against the
+        // snapshot taken in SaveAccounts. Without it, a background serialize can enumerate the list while
+        // the UI thread adds/removes → "Collection was modified" and the save is aborted (lost cookie writes).
+        private readonly static object accountsLock = new object();
+        // Coalesces the high-frequency save paths (alias/description keystrokes, 4×/tick window positions)
+        // into one write ~1s after the last change, killing SSD write-amplification and UI-thread jank.
+        private static System.Threading.Timer SaveDebounceTimer;
+        private readonly static object debounceLock = new object();
         public event EventHandler<GameArgs> RecentGameAdded;
 
         private bool IsResettingPassword;
@@ -90,7 +98,11 @@ namespace RBX_Alt_Manager
         private bool LaunchNext;
         private CancellationTokenSource LauncherToken;
 
-        private static readonly byte[] Entropy = new byte[] { 0x52, 0x4f, 0x42, 0x4c, 0x4f, 0x58, 0x20, 0x41, 0x43, 0x43, 0x4f, 0x55, 0x4e, 0x54, 0x20, 0x4d, 0x41, 0x4e, 0x41, 0x47, 0x45, 0x52, 0x20, 0x7c, 0x20, 0x3a, 0x29, 0x20, 0x7c, 0x20, 0x42, 0x52, 0x4f, 0x55, 0x47, 0x48, 0x54, 0x20, 0x54, 0x4f, 0x20, 0x59, 0x4f, 0x55, 0x20, 0x42, 0x55, 0x59, 0x20, 0x69, 0x63, 0x33, 0x77, 0x30, 0x6c, 0x66 };
+        // OLD hardcoded PUBLIC DPAPI entropy ("ROBLOX ACCOUNT MANAGER | :) | BROUGHT TO YOU BUY ic3w0lf").
+        // It is NOT a secret — anyone with the binary can reproduce it. Kept ONLY so stores written by older
+        // builds still decrypt on first load; every new save uses the per-install random Entropy (see below),
+        // so an old store silently re-protects itself with the real key the next time it's saved.
+        private static readonly byte[] LegacyEntropy = new byte[] { 0x52, 0x4f, 0x42, 0x4c, 0x4f, 0x58, 0x20, 0x41, 0x43, 0x43, 0x4f, 0x55, 0x4e, 0x54, 0x20, 0x4d, 0x41, 0x4e, 0x41, 0x47, 0x45, 0x52, 0x20, 0x7c, 0x20, 0x3a, 0x29, 0x20, 0x7c, 0x20, 0x42, 0x52, 0x4f, 0x55, 0x47, 0x48, 0x54, 0x20, 0x54, 0x4f, 0x20, 0x59, 0x4f, 0x55, 0x20, 0x42, 0x55, 0x59, 0x20, 0x69, 0x63, 0x33, 0x77, 0x30, 0x6c, 0x66 };
 
         [DllImport("DwmApi")]
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, int[] attrValue, int attrSize);
@@ -213,8 +225,10 @@ namespace RBX_Alt_Manager
 
             if (ThemeEditor.UseDarkTopBar) Icon = Properties.Resources.team_KX4_icon_white; // this has to go after or icon wont actually change
 
-            AccountsView.UnfocusedHighlightBackgroundColor = Color.FromArgb(0, 150, 215);
-            AccountsView.UnfocusedHighlightForegroundColor = Color.FromArgb(240, 240, 240);
+            // Derive the unfocused-selection highlight from the active theme instead of a fixed blue, so it stays
+            // visible and on-theme on dark and light themes alike (theme colors are already loaded by here).
+            AccountsView.UnfocusedHighlightBackgroundColor = ThemeEditor.AccountBackground.DarkenOrBrighten(0.35f);
+            AccountsView.UnfocusedHighlightForegroundColor = ThemeEditor.AccountForeground;
 
             SimpleDropSink sink = AccountsView.DropSink as SimpleDropSink;
             sink.CanDropBetween = true;
@@ -279,8 +293,88 @@ namespace RBX_Alt_Manager
             }
         }
 
-        private readonly static string SaveFilePath = Path.Combine(Environment.CurrentDirectory, "AccountData.json");
-        private readonly static string RecentGamesFilePath = Path.Combine(Environment.CurrentDirectory, "RecentGames.json"); // i shouldve combined everything that isnt accountdata into one file but oh well im too lazy : |
+        // S2: the account store lives in a locked per-user directory (%LOCALAPPDATA%\KingsRAM) instead of the
+        // working directory, so full-takeover cookies can't fan out into OneDrive/Downloads/a network share.
+        // Legacy CWD files are migrated in on first run. Falls back to CWD if LocalAppData is unavailable.
+        private readonly static string DataDirectory = ResolveDataDirectory();
+
+        // S1: per-install random DPAPI entropy, generated once and stored DPAPI-wrapped, replacing the public
+        // constant so same-user code can no longer decrypt the store just by knowing a value baked into the binary.
+        private static readonly byte[] Entropy = LoadOrCreateEntropy();
+
+        private readonly static string SaveFilePath = Path.Combine(DataDirectory, "AccountData.json");
+        private readonly static string RecentGamesFilePath = Path.Combine(DataDirectory, "RecentGames.json"); // i shouldve combined everything that isnt accountdata into one file but oh well im too lazy : |
+
+        private static string ResolveDataDirectory()
+        {
+            try
+            {
+                string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KingsRAM");
+                Directory.CreateDirectory(Dir); // LocalAppData is already ACL'd to the current user — that's the point
+
+                // One-time migration: move the legacy CWD store (+ rolling backups + RecentGames) into the locked
+                // dir. Move, not copy, so the sensitive file doesn't linger in the working directory. Non-fatal.
+                string LegacyAccount = Path.Combine(Environment.CurrentDirectory, "AccountData.json");
+                string TargetAccount = Path.Combine(Dir, "AccountData.json");
+
+                if (!File.Exists(TargetAccount) && File.Exists(LegacyAccount))
+                {
+                    foreach (string Suffix in new[] { "", ".backup", ".bak", ".old" })
+                    {
+                        string Src = LegacyAccount + Suffix, Dst = TargetAccount + Suffix;
+                        if (File.Exists(Src) && !File.Exists(Dst)) try { File.Move(Src, Dst); } catch (Exception ex) { Program.Logger.Warn($"Could not migrate {Src}: {ex.Message}"); }
+                    }
+                }
+
+                string LegacyRG = Path.Combine(Environment.CurrentDirectory, "RecentGames.json");
+                string TargetRG = Path.Combine(Dir, "RecentGames.json");
+                if (File.Exists(LegacyRG) && !File.Exists(TargetRG)) try { File.Move(LegacyRG, TargetRG); } catch { }
+
+                return Dir;
+            }
+            catch (Exception ex)
+            {
+                Program.Logger.Error($"Could not use %LOCALAPPDATA%\\KingsRAM, falling back to the working directory: {ex}");
+                return Environment.CurrentDirectory;
+            }
+        }
+
+        private static byte[] LoadOrCreateEntropy()
+        {
+            try
+            {
+                string Path_ = Path.Combine(DataDirectory, "entropy.bin");
+
+                if (File.Exists(Path_))
+                    return ProtectedData.Unprotect(File.ReadAllBytes(Path_), null, DataProtectionScope.CurrentUser);
+
+                byte[] Key = new byte[32];
+                using (var Rng = RandomNumberGenerator.Create()) Rng.GetBytes(Key);
+
+                File.WriteAllBytes(Path_, ProtectedData.Protect(Key, null, DataProtectionScope.CurrentUser));
+
+                return Key;
+            }
+            catch (Exception ex)
+            {
+                // If we can't persist a per-install key, fall back to the legacy entropy so the app still works
+                // (no worse than before). Logged so it's diagnosable.
+                Program.Logger.Error($"Could not create/load per-install entropy, using legacy entropy: {ex}");
+                return LegacyEntropy;
+            }
+        }
+
+        // Try to DPAPI-decrypt with the current per-install entropy first, then the legacy public entropy so a store
+        // written by an older build still loads (it will re-protect with the new key on the next save).
+        private static bool TryUnprotect(byte[] Data, out byte[] Plain)
+        {
+            foreach (byte[] Ent in new[] { Entropy, LegacyEntropy })
+                try { Plain = ProtectedData.Unprotect(Data, Ent, DataProtectionScope.CurrentUser); return true; }
+                catch (CryptographicException) { }
+
+            Plain = null;
+            return false;
+        }
 
         private void RefreshView(object obj = null)
         {
@@ -306,9 +400,12 @@ namespace RBX_Alt_Manager
 
             if (Data.Length > 0)
             {
-                var Header = new ReadOnlySpan<byte>(Data, 0, Cryptography.RAMHeader.Length);
+                // Guard the length before slicing: a truncated/partial store (Data.Length < header) would throw
+                // ArgumentException from the ReadOnlySpan ctor and crash the load with no recovery message.
+                bool HasHeader = Data.Length >= Cryptography.RAMHeader.Length &&
+                    new ReadOnlySpan<byte>(Data, 0, Cryptography.RAMHeader.Length).SequenceEqual(Cryptography.RAMHeader);
 
-                if (Header.SequenceEqual(Cryptography.RAMHeader))
+                if (HasHeader)
                 {
                     if (Hash == null)
                     {
@@ -329,27 +426,38 @@ namespace RBX_Alt_Manager
                     PasswordPanel.Visible = false;
                     EnteredPassword = true;
                 }
+                else if (TryUnprotect(Data, out byte[] Plain))
+                    AccountsList = JsonConvert.DeserializeObject<List<Account>>(Encoding.UTF8.GetString(Plain));
                 else
-                    try { AccountsList = JsonConvert.DeserializeObject<List<Account>>(Encoding.UTF8.GetString(ProtectedData.Unprotect(Data, Entropy, DataProtectionScope.CurrentUser))); }
-                    catch (CryptographicException e)
-                    {
-                        try { AccountsList = JsonConvert.DeserializeObject<List<Account>>(Encoding.UTF8.GetString(Data)); }
-                        catch
-                        {
-                            File.WriteAllBytes(SaveFilePath + ".bak", Data);
+                {
+                    // Neither the per-install nor the legacy DPAPI entropy could decrypt this. Only accept it as a
+                    // raw (unencrypted) JSON store if the user explicitly opted out via the NoEncryption sentinel;
+                    // otherwise treat it as corrupt/foreign and never silently trust it as plaintext.
+                    bool NoEncryptionOptOut = File.Exists(Path.Combine(Environment.CurrentDirectory, "NoEncryption.IUnderstandTheRisks.iautamor"));
 
-                            MessageBox.Show($"Failed to load accounts!\nA backup file was created in case the data can be recovered.\n\n{e.Message}");
-                        }
+                    try
+                    {
+                        if (!NoEncryptionOptOut) throw new CryptographicException("Encrypted store failed to decrypt and no NoEncryption opt-out file is present.");
+
+                        AccountsList = JsonConvert.DeserializeObject<List<Account>>(Encoding.UTF8.GetString(Data));
                     }
+                    catch (Exception e)
+                    {
+                        File.WriteAllBytes(SaveFilePath + ".bak", Data);
+
+                        MessageBox.Show($"Failed to load accounts!\nA backup file was created in case the data can be recovered.\n\n{e.Message}", "KingsRAM", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
             }
 
             AccountsList ??= new List<Account>();
 
             if (!EnteredPassword && AccountsList.Count == 0 && File.Exists($"{SaveFilePath}.backup") && File.ReadAllBytes($"{SaveFilePath}.backup") is byte[] BackupData && BackupData.Length > 0)
             {
-                var Header = new ReadOnlySpan<byte>(BackupData, 0, Cryptography.RAMHeader.Length);
+                bool BackupHasHeader = BackupData.Length >= Cryptography.RAMHeader.Length &&
+                    new ReadOnlySpan<byte>(BackupData, 0, Cryptography.RAMHeader.Length).SequenceEqual(Cryptography.RAMHeader);
 
-                if (Header.SequenceEqual(Cryptography.RAMHeader) && MessageBox.Show("The existing backup file is password-locked, would you like to attempt to load it?", "KingsRAM", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+                if (BackupHasHeader && MessageBox.Show("The existing backup file is password-locked, would you like to attempt to load it?", "KingsRAM", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
                 {
                     if (File.Exists(SaveFilePath))
                     {
@@ -369,9 +477,9 @@ namespace RBX_Alt_Manager
                 {
                     try
                     {
-                        string Decoded = Encoding.UTF8.GetString(ProtectedData.Unprotect(BackupData, Entropy, DataProtectionScope.CurrentUser));
+                        if (!TryUnprotect(BackupData, out byte[] Decoded)) throw new CryptographicException("Backup failed to decrypt");
 
-                        AccountsList = JsonConvert.DeserializeObject<List<Account>>(Decoded);
+                        AccountsList = JsonConvert.DeserializeObject<List<Account>>(Encoding.UTF8.GetString(Decoded));
                     }
                     catch
                     {
@@ -410,6 +518,20 @@ namespace RBX_Alt_Manager
             catch (Exception ex) { Program.Logger.Error($"MaybeLaunchModern: {ex}"); }
         }
 
+        // Coalesced save for hot, non-critical paths (property setters, window-position SetField). Restarts a
+        // ~1s timer on each call so a burst of edits collapses to a single write. Critical paths (add/remove/
+        // import/cookie rotation/password change) call SaveAccounts directly so they persist immediately.
+        public static void SaveAccountsDebounced()
+        {
+            lock (debounceLock)
+            {
+                if (SaveDebounceTimer == null)
+                    SaveDebounceTimer = new System.Threading.Timer(_ => { try { SaveAccounts(); } catch (Exception ex) { Program.Logger.Error($"Debounced save failed: {ex}"); } }, null, 1000, System.Threading.Timeout.Infinite);
+                else
+                    SaveDebounceTimer.Change(1000, System.Threading.Timeout.Infinite);
+            }
+        }
+
         public static void SaveAccounts(bool BypassRateLimit = false, bool BypassCountCheck = false)
         {
             if ((!BypassRateLimit && (DateTime.Now - startTime).TotalSeconds < 2) || (!BypassCountCheck && AccountsList.Count == 0)) return;
@@ -417,7 +539,10 @@ namespace RBX_Alt_Manager
             lock (saveLock)
             {
                 byte[] OldInfo = File.Exists(SaveFilePath) ? File.ReadAllBytes(SaveFilePath) : Array.Empty<byte>();
-                string SaveData = JsonConvert.SerializeObject(AccountsList);
+                // Snapshot under accountsLock so a concurrent Add/Remove can't tear the enumeration mid-serialize.
+                List<Account> Snapshot;
+                lock (accountsLock) Snapshot = new List<Account>(AccountsList);
+                string SaveData = JsonConvert.SerializeObject(Snapshot);
 
                 FileInfo Backup = new FileInfo($"{SaveFilePath}.backup");
 
@@ -548,9 +673,9 @@ namespace RBX_Alt_Manager
 
         private void SetPasswordButton_Click(object sender, EventArgs e)
         {
-            if (PasswordSelectionTB.Text.Length < 4)
+            if (PasswordSelectionTB.Text.Length < 8)
             {
-                MessageBox.Show("Invalid password, your password must contain 4 or more characters", "KingsRAM", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Your master password must be at least 8 characters.\nThis password protects every account's login cookie — pick something strong.", "KingsRAM", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -578,7 +703,12 @@ namespace RBX_Alt_Manager
                     MaybeLaunchModern(); // first-run (password) just finished — open the modern UI now
                 }
                 else
-                    MessageBox.Show("You have entered the wrong password, please try again.", "KingsRAM", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                {
+                    // Reset so the next attempt starts a fresh set/confirm pair. Without this the flow kept
+                    // comparing the new confirmation against the stale first-attempt hash and could never succeed.
+                    LastHash = null;
+                    MessageBox.Show("Those passwords didn't match. Please re-enter your new password.", "KingsRAM", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
             }
         }
 
@@ -655,7 +785,7 @@ namespace RBX_Alt_Manager
                 }
                 else
                 {
-                    AccountsList.Add(account);
+                    lock (accountsLock) AccountsList.Add(account);
 
                     Instance.RefreshView(account);
                 }
@@ -670,7 +800,7 @@ namespace RBX_Alt_Manager
 
         public static string ShowDialog(string text, string caption, string defaultText = "", bool big = false) // tbh pasted from stackoverflow
         {
-            Form prompt = new Form()
+            using Form prompt = new Form()
             {
                 Width = 340,
                 Height = big ? 420 : 125,
@@ -773,17 +903,12 @@ namespace RBX_Alt_Manager
                         string Releases = WC.DownloadString("https://api.github.com/repos/KingIcyCreamProjects/Roblox-Account-Manager/releases/latest");
                         Match match = Regex.Match(Releases, @"""tag_name"":\s*""?([^""]+)");
 
-                        if (match.Success)
+                        // Compare as real version numbers. The old string method (TrimEnd('.','0') + Replace + double)
+                        // collapsed any component ending in 0, so 1.1.10 parsed LOWER than 1.1.9 and double-digit
+                        // minor/patch bumps silently never prompted an update. Version handles component order correctly.
+                        if (match.Success && Version.TryParse(fvi.FileVersion, out Version CurrentV) && Version.TryParse(match.Groups[1].Value.TrimStart('v', 'V'), out Version NewV))
                         {
-                            string Current = fvi.FileVersion.TrimEnd('.', '0').Replace(".", string.Empty);
-                            string New = match.Groups[1].Value.TrimEnd('.', '0').Replace(".", string.Empty);
-
-                            if (Current.Length > New.Length)
-                                New = New.PadRight(Current.Length, '0');
-                            else if (New.Length > Current.Length)
-                                Current = Current.PadRight(New.Length, '0');
-
-                            if (double.TryParse(New, out double NV) && double.TryParse(Current, out double CV) && NV > CV)
+                            if (NewV > CurrentV)
                             {
                                 bool ShouldUpdate = Utilities.YesNoPrompt("KingsRAM", "An update is available", "Would you like to update now?");
 
@@ -806,7 +931,7 @@ namespace RBX_Alt_Manager
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ux) { Program.Logger.Warn($"Update check failed: {ux.Message}"); }
                 });
             }
 
@@ -831,7 +956,14 @@ namespace RBX_Alt_Manager
                                     proc.Start();
                                     Environment.Exit(1);
                                 }
-                                catch { }
+                                catch (Exception ex)
+                                {
+                                    // User declined the UAC prompt (or elevation failed). We can't bind external
+                                    // interfaces without admin, so fall back to loopback-only and say why instead
+                                    // of silently ignoring the AllowExternalConnections setting.
+                                    Program.Logger.Warn($"External web-server bind needs elevation; continuing loopback-only: {ex.Message}");
+                                    MessageBox.Show("External connections require running KingsRAM as administrator.\nThe web server will only accept local (loopback) connections this session.", "KingsRAM", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                                }
 
 
                     AltManagerWS = new WebServer(SendResponse, Prefixes.ToArray());
@@ -855,7 +987,8 @@ namespace RBX_Alt_Manager
             PlaceID.AutoCompleteMode = AutoCompleteMode.Suggest;
             PlaceID.AutoCompleteSource = AutoCompleteSource.CustomSource;
 
-            Task.Run(LoadRecentGames);
+            // async Task now, so wrapping it observes post-first-await faults instead of losing them (async void).
+            Task.Run(LoadRecentGames).ContinueWith(t => Program.Logger.Error($"LoadRecentGames faulted: {t.Exception}"), TaskContinuationOptions.OnlyOnFaulted);
             Task.Run(RobloxProcess.UpdateMatches);
 
             if (General.Get<bool>("ShuffleJobId"))
@@ -868,7 +1001,12 @@ namespace RBX_Alt_Manager
                 {
                     int Count = 0;
 
-                    foreach (var Account in AccountsList)
+                    // Enumerate a snapshot: this runs on a timer thread and holds the enumerator open for seconds
+                    // (5s delay per account), so iterating the live list would throw if the user adds/removes meanwhile.
+                    List<Account> Snapshot;
+                    lock (accountsLock) Snapshot = new List<Account>(AccountsList);
+
+                    foreach (var Account in Snapshot)
                     {
                         if (Account.GetField("NoCookieRefresh") != "true" && (DateTime.Now - Account.LastUse).TotalDays > 20 && (DateTime.Now - Account.LastAttemptedRefresh).TotalDays >= 7)
                         {
@@ -918,7 +1056,7 @@ namespace RBX_Alt_Manager
             SettingsForm?.ApplyTheme();
         }
 
-        private async void LoadRecentGames()
+        private async Task LoadRecentGames()
         {
             RecentGames = new List<Game>();
 
@@ -1023,6 +1161,12 @@ namespace RBX_Alt_Manager
             string Account = request.QueryString["Account"];
             string Password = request.QueryString["Password"];
 
+            // Deny-by-default for anything reaching us from off-box: a remote caller must ALWAYS supply the
+            // password, whatever endpoint they hit. Previously a whole class of state-changing/metadata endpoints
+            // (GetCSRFToken, SetServer, Block/Unblock, GetAlias, ...) had no password gate at all once external
+            // connections were enabled. Loopback callers keep the existing lighter per-method gating.
+            if (!request.IsLocal && !PasswordOK(Password)) return Reply("Invalid Password, make sure your password contains 6 or more characters", false, 401, "Invalid Password");
+
             if (WebServer.Get<bool>("EveryRequestRequiresPassword") && !PasswordOK(Password)) return Reply("Invalid Password, make sure your password contains 6 or more characters", false, 401, "Invalid Password");
 
             if ((Method == "GetCookie" || Method == "GetAccounts" || Method == "GetAccountsJson" || Method == "LaunchAccount" || Method == "FollowUser") && !PasswordOK(Password)) return Reply("Invalid Password, make sure your password contains 6 or more characters", false, 401, "Invalid Password");
@@ -1031,17 +1175,14 @@ namespace RBX_Alt_Manager
             {
                 if (!WebServer.Get<bool>("AllowGetAccounts")) return Reply("Method `GetAccounts` not allowed", false, 401, "Method not allowed");
 
-                string Names = "";
                 string GroupFilter = request.QueryString["Group"];
 
-                foreach (Account acc in AccountsList)
-                {
-                    if (!string.IsNullOrEmpty(GroupFilter) && acc.Group != GroupFilter) continue;
+                // Snapshot under the lock (this runs on a web-server thread that must not tear the list mid-mutation),
+                // then join in one pass instead of O(n^2) string concatenation.
+                List<Account> Snapshot; lock (accountsLock) Snapshot = new List<Account>(AccountsList);
+                string Names = string.Join(",", Snapshot.Where(acc => string.IsNullOrEmpty(GroupFilter) || acc.Group == GroupFilter).Select(acc => acc.Username));
 
-                    Names += acc.Username + ",";
-                }
-
-                return Reply(Names.TrimEnd(','), true, Raw: Names.TrimEnd(','));
+                return Reply(Names, true, Raw: Names);
             }
 
             if (Method == "GetAccountsJson")
@@ -1049,11 +1190,15 @@ namespace RBX_Alt_Manager
                 if (!WebServer.Get<bool>("AllowGetAccounts")) return Reply("Method `GetAccountsJson` not allowed", false, 401, "Method not allowed");
 
                 string GroupFilter = request.QueryString["Group"];
-                bool ShowCookies = PasswordOK(Password) && request.QueryString["IncludeCookies"] == "true" && WebServer.Get<bool>("AllowGetCookie");
+                // Never hand a raw takeover cookie back over a non-loopback connection, even with the password/flag —
+                // the transport is cleartext HTTP and would expose it to anyone sniffing the segment.
+                bool ShowCookies = request.IsLocal && PasswordOK(Password) && request.QueryString["IncludeCookies"] == "true" && WebServer.Get<bool>("AllowGetCookie");
 
                 List<object> Objects = new List<object>();
 
-                foreach (Account acc in AccountsList)
+                List<Account> Snapshot; lock (accountsLock) Snapshot = new List<Account>(AccountsList);
+
+                foreach (Account acc in Snapshot)
                 {
                     if (!string.IsNullOrEmpty(GroupFilter) && acc.Group != GroupFilter) continue;
 
@@ -1089,13 +1234,18 @@ namespace RBX_Alt_Manager
 
             if (string.IsNullOrEmpty(Account)) return Reply("Empty Account", false);
 
-            Account account = AccountsList.FirstOrDefault(x => x.Username == Account || x.UserID.ToString() == Account);
+            // Snapshot under the lock so this web-thread lookup can't tear the list during a mutation.
+            // ponytail: still an O(n) scan — a Username/UserID dictionary index would be O(1), but n is a
+            // handful of accounts on a loopback API, so the index isn't worth the add/remove bookkeeping.
+            Account account;
+            lock (accountsLock) account = AccountsList.FirstOrDefault(x => x.Username == Account || x.UserID.ToString() == Account);
 
             if (account == null || !account.GetCSRFToken(out string Token)) return Reply("Invalid Account, the account's cookie may have expired and resulted in the account being logged out", false, Raw: "Invalid Account");
 
             if (Method == "GetCookie")
             {
                 if (!WebServer.Get<bool>("AllowGetCookie")) return Reply("Method `GetCookie` not allowed", false, 401, "Method not allowed");
+                if (!request.IsLocal) return Reply("Cookies can only be retrieved over a local (loopback) connection", false, 403, "Cookies are loopback-only");
 
                 return Reply(account.SecurityToken, true);
             }
@@ -1160,13 +1310,18 @@ namespace RBX_Alt_Manager
 
             if (Method == "SetServer" && !string.IsNullOrEmpty(request.QueryString["PlaceId"]) && !string.IsNullOrEmpty(request.QueryString["JobId"]))
             {
-                string RSP = account.SetServer(Convert.ToInt64(request.QueryString["PlaceId"]), request.QueryString["JobId"], out bool Success);
+                if (!long.TryParse(request.QueryString["PlaceId"], out long SetPlaceId)) return Reply("Invalid PlaceId provided", false, Raw: "Invalid PlaceId");
+
+                string RSP = account.SetServer(SetPlaceId, request.QueryString["JobId"], out bool Success);
 
                 return Reply(RSP, Success);
             }
 
             if (Method == "SetRecommendedServer")
             {
+                long RecPlaceId = RBX_Alt_Manager.ServerList.CurrentPlaceID;
+                if (!string.IsNullOrEmpty(request.QueryString["PlaceId"]) && !long.TryParse(request.QueryString["PlaceId"], out RecPlaceId)) return Reply("Invalid PlaceId provided", false, Raw: "Invalid PlaceId");
+
                 int attempts = 0;
                 string res = "-1";
 
@@ -1184,7 +1339,7 @@ namespace RBX_Alt_Manager
 
                     attempts++;
 
-                    res = account.SetServer(!string.IsNullOrEmpty(request.QueryString["PlaceId"]) ? Convert.ToInt64(request.QueryString["PlaceId"]) : RBX_Alt_Manager.ServerList.CurrentPlaceID, server.id, out bool iSuccess);
+                    res = account.SetServer(RecPlaceId, server.id, out bool iSuccess);
 
                     if (iSuccess)
                         return Reply(res, iSuccess);
@@ -1381,36 +1536,31 @@ namespace RBX_Alt_Manager
             return true;
         }
 
-        private void Remove_Click(object sender, EventArgs e)
+        // Single implementation for both the Remove button and the right-click "Remove Account" item.
+        // (They used to be duplicated with a subtle Remove-vs-RemoveAll divergence on the single-select path.)
+        private void RemoveSelectedAccounts()
         {
-            if (AccountsView.SelectedObjects.Count > 1)
+            var Selected = AccountsView.SelectedObjects.Cast<Account>().ToList();
+
+            if (Selected.Count > 1)
             {
-                DialogResult result = MessageBox.Show($"Are you sure you want to remove {AccountsView.SelectedObjects.Count} accounts?", "Remove Accounts", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (MessageBox.Show($"Are you sure you want to remove {Selected.Count} accounts?", "Remove Accounts", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
-                if (result == DialogResult.Yes)
-                {
-                    foreach (Account acc in AccountsView.SelectedObjects)
-                        AccountsList.Remove(acc);
-
-                    RefreshView();
-
-                    SaveAccounts();
-                }
+                lock (accountsLock) foreach (Account acc in Selected) AccountsList.Remove(acc);
             }
             else if (SelectedAccount != null)
             {
-                DialogResult result = MessageBox.Show($"Are you sure you want to remove {SelectedAccount.Username}?", "Remove Account", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (MessageBox.Show($"Are you sure you want to remove {SelectedAccount.Username}?", "Remove Account", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
-                if (result == DialogResult.Yes)
-                {
-                    AccountsList.RemoveAll(x => x == SelectedAccount);
-
-                    RefreshView();
-
-                    SaveAccounts();
-                }
+                lock (accountsLock) AccountsList.Remove(SelectedAccount);
             }
+            else return;
+
+            RefreshView();
+            SaveAccounts();
         }
+
+        private void Remove_Click(object sender, EventArgs e) => RemoveSelectedAccounts();
 
         private async void Add_Click(object sender, EventArgs e)
         {
@@ -1608,7 +1758,7 @@ namespace RBX_Alt_Manager
 
             bool LaunchMultiple = AccountsView.SelectedObjects.Count > 1;
 
-            new Thread(async () => // finally fixing an ancient bug in a dumb way, p.s. i do not condone this.
+            _ = Task.Run(async () => // was new Thread(async …).Start() which detached the async state machine from the thread
             {
                 if (LaunchMultiple)
                 {
@@ -1621,9 +1771,9 @@ namespace RBX_Alt_Manager
                     string res = await SelectedAccount.JoinServer(PlaceId, VIPServer ? JobID.Text.Substring(4) : JobID.Text, false, VIPServer);
 
                     if (!res.Contains("Success"))
-                        MessageBox.Show(res);
+                        MessageBox.Show(res, "Join Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
-            }).Start();
+            });
         }
 
         private async void Follow_Click(object sender, EventArgs e)
@@ -1685,34 +1835,7 @@ namespace RBX_Alt_Manager
             AccountsView.EndUpdate();
         }
 
-        private void removeAccountToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            if (AccountsView.SelectedObjects.Count > 1)
-            {
-                DialogResult result = MessageBox.Show($"Are you sure you want to remove {AccountsView.SelectedObjects.Count} accounts?", "Remove Accounts", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-
-                if (result == DialogResult.Yes)
-                {
-                    foreach (Account acc in AccountsView.SelectedObjects)
-                        AccountsList.Remove(acc);
-
-                    RefreshView();
-                    SaveAccounts();
-                }
-            }
-            else if (SelectedAccount != null)
-            {
-                DialogResult result = MessageBox.Show($"Are you sure you want to remove {SelectedAccount.Username}?", "Remove Account", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-
-                if (result == DialogResult.Yes)
-                {
-                    AccountsList.Remove(SelectedAccount);
-
-                    RefreshView();
-                    SaveAccounts();
-                }
-            }
-        }
+        private void removeAccountToolStripMenuItem_Click(object sender, EventArgs e) => RemoveSelectedAccounts();
 
         private void AccountManager_FormClosing(object sender, FormClosingEventArgs e)
         {
@@ -1724,6 +1847,10 @@ namespace RBX_Alt_Manager
             }
 
             AltManagerWS?.Stop();
+
+            // Flush any change still sitting in the debounce timer (alias/description/window positions) so it
+            // isn't lost when the process exits before the ~1s timer fires.
+            try { SaveAccounts(); } catch (Exception ex) { Program.Logger.Error($"Save-on-close failed: {ex}"); }
 
             if (PlaceID == null || string.IsNullOrEmpty(PlaceID.Text)) return;
 
@@ -1745,12 +1872,34 @@ namespace RBX_Alt_Manager
             UtilsForm.BringToFront();
         }
 
+        private static System.Windows.Forms.Timer ClipboardClearTimer;
+
+        // Copy secrets (auth tickets, cookies, passwords, launch links that embed a ticket) to the clipboard,
+        // then auto-clear after a delay so they don't linger in the clipboard/clipboard-history for any process
+        // to read. Only clears if the clipboard still holds exactly what we put there (never nukes a later copy).
+        private static void CopySensitive(string Text)
+        {
+            if (string.IsNullOrEmpty(Text)) return;
+
+            try { Clipboard.SetText(Text); } catch { return; }
+
+            ClipboardClearTimer?.Stop();
+            ClipboardClearTimer?.Dispose();
+            ClipboardClearTimer = new System.Windows.Forms.Timer { Interval = 45000 };
+            ClipboardClearTimer.Tick += (s, e) =>
+            {
+                ClipboardClearTimer.Stop();
+                try { if (Clipboard.ContainsText() && Clipboard.GetText() == Text) Clipboard.Clear(); } catch { }
+            };
+            ClipboardClearTimer.Start();
+        }
+
         private void getAuthenticationTicketToolStripMenuItem_Click(object sender, EventArgs e)
         {
             if (SelectedAccount != null)
             {
                 if (SelectedAccount.GetAuthTicket(out string STicket))
-                    Clipboard.SetText(STicket);
+                    CopySensitive(STicket);
 
                 return;
             }
@@ -1766,7 +1915,7 @@ namespace RBX_Alt_Manager
             }
 
             if (Tickets.Count > 0)
-                Clipboard.SetText(string.Join("\n", Tickets));
+                CopySensitive(string.Join("\n", Tickets));
         }
 
         private void copyRbxplayerLinkToolStripMenuItem_Click(object sender, EventArgs e)
@@ -1779,7 +1928,7 @@ namespace RBX_Alt_Manager
                 double LaunchTime = Math.Floor((DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds * 1000);
 
                 Random r = new Random();
-                Clipboard.SetText(string.Format("<roblox-player://1/1+launchmode:play+gameinfo:{0}+launchtime:{4}+browsertrackerid:{5}+placelauncherurl:https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestGame{3}&placeId={1}{2}+robloxLocale:en_us+gameLocale:en_us>", Ticket, PlaceID.Text, HasJobId ? "" : ("&gameId=" + JobID.Text), HasJobId ? "" : "Job", LaunchTime, r.Next(100000, 130000).ToString() + r.Next(100000, 900000).ToString()));
+                CopySensitive(string.Format("<roblox-player://1/1+launchmode:play+gameinfo:{0}+launchtime:{4}+browsertrackerid:{5}+placelauncherurl:https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestGame{3}&placeId={1}{2}+robloxLocale:en_us+gameLocale:en_us>", Ticket, PlaceID.Text, HasJobId ? "" : ("&gameId=" + JobID.Text), HasJobId ? "" : "Job", LaunchTime, r.Next(100000, 130000).ToString() + r.Next(100000, 900000).ToString()));
             }
         }
 
@@ -1799,7 +1948,7 @@ namespace RBX_Alt_Manager
             foreach (Account account in AccountsView.SelectedObjects)
                 Tokens.Add(account.SecurityToken);
 
-            Clipboard.SetText(string.Join("\n", Tokens));
+            CopySensitive(string.Join("\n", Tokens));
         }
 
         private void copyUsernameToolStripMenuItem_Click(object sender, EventArgs e)
@@ -1819,7 +1968,7 @@ namespace RBX_Alt_Manager
             foreach (Account account in AccountsView.SelectedObjects)
                 Passwords.Add($"{account.Password}");
 
-            Clipboard.SetText(string.Join("\n", Passwords));
+            CopySensitive(string.Join("\n", Passwords));
         }
 
         private void copyUserPassComboToolStripMenuItem_Click(object sender, EventArgs e)
@@ -1829,7 +1978,7 @@ namespace RBX_Alt_Manager
             foreach (Account account in AccountsView.SelectedObjects)
                 Combos.Add($"{account.Username}:{account.Password}");
 
-            Clipboard.SetText(string.Join("\n", Combos));
+            CopySensitive(string.Join("\n", Combos));
         }
 
         private void copyUserIdToolStripMenuItem_Click(object sender, EventArgs e)
@@ -1894,7 +2043,7 @@ namespace RBX_Alt_Manager
                 double LaunchTime = Math.Floor((DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds * 1000);
 
                 Random r = new Random();
-                Clipboard.SetText(string.Format("<roblox-player://1/1+launchmode:app+gameinfo:{0}+launchtime:{1}+browsertrackerid:{2}+robloxLocale:en_us+gameLocale:en_us>", Ticket, LaunchTime, r.Next(500000, 600000).ToString() + r.Next(10000, 90000).ToString()));
+                CopySensitive(string.Format("<roblox-player://1/1+launchmode:app+gameinfo:{0}+launchtime:{1}+browsertrackerid:{2}+robloxLocale:en_us+gameLocale:en_us>", Ticket, LaunchTime, r.Next(500000, 600000).ToString() + r.Next(10000, 90000).ToString()));
             }
         }
 
@@ -1932,6 +2081,8 @@ namespace RBX_Alt_Manager
             {
                 string Script = ShowDialog("Javascript", "Open Browser", big: true);
 
+                if (Script == "/UC") return; // dialog cancelled — don't inject the literal sentinel as JS
+
                 foreach (Account account in AccountsView.SelectedObjects)
                     new AccountBrowser(account, Link.ToString(), Script);
             }
@@ -1959,6 +2110,8 @@ namespace RBX_Alt_Manager
             if (Uri.TryCreate(ShowDialog("URL", "Launch Browser", "https://roblox.com/"), UriKind.Absolute, out Uri Link))
             {
                 string Script = ShowDialog("Javascript", "Launch Browser", big: true);
+
+                if (Script == "/UC") return; // dialog cancelled — don't inject the literal sentinel as JS
 
                 var Size = new System.Numerics.Vector2(550, 440);
                 AccountBrowser.CreateGrid(Size);
@@ -2045,8 +2198,7 @@ namespace RBX_Alt_Manager
 
                 dragged.Group = droppedOn.Group;
 
-                AccountsList.Remove(dragged);
-                AccountsList.Insert(Index, dragged);
+                lock (accountsLock) { AccountsList.Remove(dragged); AccountsList.Insert(Math.Min(Index, AccountsList.Count), dragged); }
             }
 
             RefreshView(e.SourceModels[e.SourceModels.Count - 1]);
@@ -2059,7 +2211,7 @@ namespace RBX_Alt_Manager
 
             if (result == DialogResult.Yes)
             {
-                AccountsList = AccountsList.OrderByDescending(x => x.Username.All(char.IsDigit)).ThenByDescending(x => x.Username.Any(char.IsLetter)).ThenBy(x => x.Username).ToList();
+                lock (accountsLock) AccountsList = AccountsList.OrderByDescending(x => x.Username.All(char.IsDigit)).ThenByDescending(x => x.Username.Any(char.IsLetter)).ThenBy(x => x.Username).ToList();
 
                 AccountsView.SetObjects(AccountsList);
                 AccountsView.BuildGroups();
@@ -2262,8 +2414,12 @@ namespace RBX_Alt_Manager
 
         private void AccountsView_Scroll(object sender, ScrollEventArgs e)
         {
-            if (PresenceCancellationToken != null || !General.Get<bool>("ShowPresence"))
-                PresenceCancellationToken.Cancel();
+            // Cancel any in-flight presence debounce, then bail if presence display is off. The old
+            // `token != null || !ShowPresence` guard dereferenced a null token on the first scroll with
+            // ShowPresence off (null != null is false, !false is true → entered the block → NRE).
+            PresenceCancellationToken?.Cancel();
+
+            if (!General.Get<bool>("ShowPresence")) return;
 
             PresenceCancellationToken = new CancellationTokenSource();
             var Token = PresenceCancellationToken.Token;

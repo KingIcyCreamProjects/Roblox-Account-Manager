@@ -22,7 +22,14 @@ namespace RBX_Alt_Manager
             BackColor = ThemeEditor.FormsBackground;
             ForeColor = ThemeEditor.FormsForeground;
 
-            foreach (Control control in this.Controls)
+            ThemeControls(this.Controls);
+        }
+
+        // Recurses into nested containers — the old version only walked top-level Controls, so anything inside a
+        // Panel/GroupBox/TabPage kept the default (unthemed) colors.
+        private void ThemeControls(Control.ControlCollection controls)
+        {
+            foreach (Control control in controls)
             {
                 if (control is Button || control is CheckBox)
                 {
@@ -63,6 +70,9 @@ namespace RBX_Alt_Manager
                     control.BackColor = ThemeEditor.ButtonsBackground;
                     control.ForeColor = ThemeEditor.ButtonsForeground;
                 }
+
+                if (control.HasChildren && (control is Panel || control is GroupBox || control is TabPage || control is TabControl || control is FlowLayoutPanel || control is TableLayoutPanel))
+                    ThemeControls(control.Controls);
             }
         }
 

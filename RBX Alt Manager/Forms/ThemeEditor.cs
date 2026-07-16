@@ -328,7 +328,7 @@ namespace RBX_Alt_Manager.Forms
         {
             UseDarkTopBar = !UseDarkTopBar;
             SaveTheme();
-            MessageBox.Show("This option requires RAM to be restarted.\nThis may not work on older versions of windows.\nEnabled: " + (UseDarkTopBar ? "True" : "false"), "KingsRAM", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("This option requires RAM to be restarted.\nThis may not work on older versions of windows.\nEnabled: " + UseDarkTopBar.ToString(), "KingsRAM", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
     }
 }

@@ -23,10 +23,31 @@ namespace RBX_Alt_Manager.Nexus
         private string getName() => Context.QueryString["name"] ?? (_prefix + getNum());
         private int getNum() => Interlocked.Increment(ref _num);
 
+        // Constant-time string compare so a network attacker can't time-probe the shared secret.
+        private static bool FixedTimeEquals(string a, string b)
+        {
+            byte[] x = System.Text.Encoding.UTF8.GetBytes(a ?? "");
+            byte[] y = System.Text.Encoding.UTF8.GetBytes(b ?? "");
+
+            int diff = x.Length ^ y.Length;
+            for (int i = 0; i < y.Length; i++) diff |= (i < x.Length ? x[i] : (byte)0) ^ y[i];
+
+            return diff == 0;
+        }
+
         protected override void OnOpen()
         {
             // The in-game Lua client sends no Origin; a browser page attempting to drive this control socket does.
             if (!string.IsNullOrEmpty(Context.Origin)) { Context.WebSocket.Close(); return; }
+
+            // A non-loopback client (only reachable when AllowExternalConnections binds every interface) must present
+            // the per-session shared secret. Loopback stays open — "knows a username" was the ONLY barrier before,
+            // which is no barrier at all for a LAN/internet peer.
+            if (!Context.IsLocal)
+            {
+                string Provided = Context.QueryString["token"] ?? "";
+                if (string.IsNullOrEmpty(AccountControl.NexusToken) || !FixedTimeEquals(Provided, AccountControl.NexusToken)) { Context.WebSocket.Close(); return; }
+            }
 
             if (string.IsNullOrEmpty(Context.QueryString["name"]) || string.IsNullOrEmpty(Context.QueryString["id"])) { Context.WebSocket.Close(); return; }
 

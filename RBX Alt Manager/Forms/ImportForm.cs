@@ -1,6 +1,7 @@
 ﻿using RBX_Alt_Manager.Forms;
 using System;
 using System.Drawing;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace RBX_Alt_Manager
@@ -70,21 +71,33 @@ namespace RBX_Alt_Manager
             Hide();
         }
 
-        private void ImportButton_Click(object sender, EventArgs e)
+        private async void ImportButton_Click(object sender, EventArgs e)
         {
             string[] List = Accounts.Text.Split('\n');
 
             Accounts.Text = string.Empty;
+            ImportButton.Enabled = false;
+
+            var Output = new System.Text.StringBuilder();
+            int Done = 0;
 
             foreach (string Token in List)
             {
-                Account NewAccount = AccountManager.AddAccount(Token);
+                if (!string.IsNullOrWhiteSpace(Token))
+                {
+                    // Each AddAccount does a synchronous Roblox HTTP call; run it off the UI thread so the form
+                    // doesn't freeze while importing a long list. Results stream in as each one completes.
+                    Account NewAccount = await Task.Run(() => AccountManager.AddAccount(Token.Trim()));
 
-                if (NewAccount != null)
-                    Accounts.Text += $"Added {NewAccount.Username}";
-                else
-                    Accounts.Text += $"Failed to add {Token}";
+                    Output.AppendLine(NewAccount != null ? $"Added {NewAccount.Username}" : $"Failed to add {Token.Trim()}");
+                    Accounts.Text = Output.ToString();
+                }
+
+                ImportButton.Text = $"Importing {++Done}/{List.Length}";
             }
+
+            ImportButton.Text = "Import";
+            ImportButton.Enabled = true;
         }
     }
 }

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace RBX_Alt_Manager
@@ -74,15 +75,31 @@ namespace RBX_Alt_Manager
         public void FlashGreen()
         {
             LastColor = AccountName.ForeColor;
-            AccountName.ForeColor = Color.Green;
+            // Plain Color.Green is near-invisible on dark themes; use a bright green there, a darker one on light.
+            AccountName.ForeColor = ThemeEditor.FormsBackground.GetBrightness() < 0.5 ? Color.FromArgb(87, 245, 102) : Color.FromArgb(30, 140, 40);
 
             Success.Start();
         }
 
         private void AddField(string Field, string Value)
         {
+            RemoveEmptyHint();
+
             Field f = new Field(Viewing, Field, Value);
             FieldsPanel.Controls.Add(f);
+        }
+
+        // Inline "no fields yet" guidance shown when an account has no custom fields (the panel was just blank before).
+        private void RemoveEmptyHint()
+        {
+            foreach (Control hint in FieldsPanel.Controls.OfType<Label>().ToList())
+                FieldsPanel.Controls.Remove(hint);
+        }
+
+        private void ShowEmptyHintIfNeeded()
+        {
+            if (FieldsPanel.Controls.Count == 0)
+                FieldsPanel.Controls.Add(new Label { Text = "No custom fields yet — click Add to create one.", AutoSize = true, ForeColor = ThemeEditor.LabelForeground, Margin = new Padding(6) });
         }
 
         public void View(Account account)
@@ -96,6 +113,8 @@ namespace RBX_Alt_Manager
             AccountName.Text = "Viewing Fields of " + account.Username;
 
             foreach (KeyValuePair<string, string> Key in account.Fields) AddField(Key.Key, Key.Value);
+
+            ShowEmptyHintIfNeeded();
 
             Show();
             WindowState = FormWindowState.Normal;

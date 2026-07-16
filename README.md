@@ -28,6 +28,16 @@ Multiple Roblox instances are built in but [must be manually enabled](#q-how-do-
 You are welcome to edit the code and open pull requests if it'll benefit this project. Found a bug? Open an issue on this repository.
 
 ## What's new
+### v1.2.0 — Security & reliability hardening pass
+A broad hardening pass over the whole app (a multi-agent audit, then per-finding fixes):
+- **Your cookies are protected properly at rest.** The account store now lives in a locked, per-user folder (`%LOCALAPPDATA%\KingsRAM`) instead of next to the app, so it can't get copied into OneDrive/Downloads/shared folders. It's encrypted with a random per-install key (DPAPI-wrapped) rather than a value hard-coded in the app. Existing data is migrated and re-encrypted automatically on first launch.
+- **The local web API is deny-by-default.** Any request from another machine now always requires the password (previously a class of endpoints needed none), login cookies are only ever returned over a local connection, and the Nexus control socket requires a per-session secret for non-loopback clients.
+- **Stronger master password** (minimum raised, weak-password path removed) and the app refuses to silently load an unencrypted store unless you explicitly opt out.
+- **Real bug fixes:** a concurrency bug that could crash background threads and drop cookie saves, a broken update-version check (double-digit versions), several crashes/races (log stream disposal, a settings dictionary, dialog cancels, null-derefs), and more.
+- **Snappier & tidier:** debounced saves (no more write-per-keystroke), cached/compiled hot paths, background account import with progress, and assorted UI polish.
+
+*Note: after updating, don't run an older KingsRAM build — it looks for your accounts in the old location and won't see the migrated store.*
+
 ### v1.1.7 — Launch actually works ("415 Unsupported Media Type" fix)
 - **Fixed the real cause of failed launches.** Roblox started rejecting the authentication-ticket request with *415 Unsupported Media Type* unless it is sent as JSON. Launches now include the correct JSON content type and body, so accounts can join games again. (v1.1.6 added the `Origin` header, which was necessary but not sufficient — this is the missing piece.)
 - **Accounts stay valid longer.** Roblox now periodically re-issues your login cookie (via `Set-Cookie`) and eventually rejects the old one — the reason alts seemed to "go invalid" quickly. KingsRAM now picks up the refreshed cookie automatically each time you launch and saves it, guarded so a bad value can never sign you out.

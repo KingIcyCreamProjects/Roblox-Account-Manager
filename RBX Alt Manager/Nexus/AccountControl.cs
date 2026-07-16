@@ -33,6 +33,12 @@ namespace RBX_Alt_Manager.Forms
         public static AccountControl Instance;
         public static WebSocketServer Server;
 
+        // Per-session shared secret for the Nexus control socket. Loopback (same-machine) clients don't need it —
+        // same trust boundary as the app, and the inbound command set can't exfiltrate cookies or run code. A
+        // NON-loopback client (only reachable when AllowExternalConnections binds every interface) MUST present it,
+        // so a LAN/internet peer can't drive the control channel just by knowing a public username.
+        public static string NexusToken { get; private set; }
+
         // Thread-safe: mutated/read from websocket-sharp's per-session callback threads (OnOpen/OnClose/OnMessage)
         // plus the reconnect path that force-closes a superseded socket. A plain Dictionary here could tear
         // its bucket arrays under concurrent Add/Remove and crash or spin. ConcurrentDictionary makes each op atomic.
@@ -106,7 +112,14 @@ namespace RBX_Alt_Manager.Forms
             if (Port < 1 || Port > 65535)
                 throw new Exception("Port can not be less than 1 or more than 65535");
 
-            Server = new WebSocketServer(AccountManager.AccountControl.Get<bool>("AllowExternalConnections") ? IPAddress.Any : IPAddress.Loopback, Port, false);
+            bool External = AccountManager.AccountControl.Get<bool>("AllowExternalConnections");
+
+            NexusToken = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N"); // 128-bit random shared secret
+
+            if (External)
+                Program.Logger.Info($"[Nexus] External connections enabled — remote clients must append &token={NexusToken} to the connection URL (loopback clients don't need it).");
+
+            Server = new WebSocketServer(External ? IPAddress.Any : IPAddress.Loopback, Port, false);
 
             // websocket-sharp's sweep sends protocol-level Ping frames and force-closes any session
             // that doesn't return a Pong within WaitTime (1s default). The in-game Lua client's liveness
@@ -123,7 +136,8 @@ namespace RBX_Alt_Manager.Forms
 
             Server.Start();
 
-            Process.GetCurrentProcess().WaitForExit();
+            // (Removed Process.GetCurrentProcess().WaitForExit() — it pinned a ThreadPool thread for the whole
+            //  app lifetime for nothing; the WebSocketServer runs its own listener threads.)
         }
 
         public void EmitMessage(string Message, bool ToAll = false)
@@ -314,10 +328,13 @@ namespace RBX_Alt_Manager.Forms
             Task Listener = new Task(new Action(OpenServer));
             Listener.Start();
 
+            // Task.Wait wraps any startup fault (bad port, bind-in-use) in AggregateException — catching only
+            // InvalidOperationException meant those failures were never shown and the socket silently didn't listen.
             try { Listener.Wait(50); }
-            catch (InvalidOperationException x)
+            catch (AggregateException x)
             {
-                MessageBox.Show($"{x.Message} {x.StackTrace}", "Account Control", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Exception Inner = x.InnerException ?? x;
+                MessageBox.Show($"Failed to start the Nexus server:\n\n{Inner.Message}", "Account Control", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Hide();
             }
 
@@ -498,13 +515,17 @@ namespace RBX_Alt_Manager.Forms
             {
                 bool UsePresence = AccountManager.AccountControl.Get<bool>("UsePresence");
 
-                if (UsePresence) await Presence.UpdatePresence(Accounts.Select(a => a.LinkedAccount.UserID).ToArray());
+                if (UsePresence) await Presence.UpdatePresence(Accounts.Where(a => a.LinkedAccount != null).Select(a => a.LinkedAccount.UserID).ToArray());
 
                 foreach (ControlledAccount account in Accounts)
                 {
+                    if (account.LinkedAccount == null) continue; // account was removed from the manager but still linked here
+
                     if (account.AutoRelaunch)
                     {
-                        if ((UsePresence && account.LinkedAccount.Presence.userPresenceType != UserPresenceType.InGame) || (!UsePresence && (DateTime.Now - account.LastPing).TotalSeconds > account.RelaunchDelay))
+                        // Presence is a class and may be null before the first successful presence fetch — treat
+                        // "no presence data" as not-in-game (so it relaunches) rather than NRE'ing the whole tick.
+                        if ((UsePresence && account.LinkedAccount.Presence?.userPresenceType != UserPresenceType.InGame) || (!UsePresence && (DateTime.Now - account.LastPing).TotalSeconds > account.RelaunchDelay))
                         {
                             Program.Logger.Info($"Relaunch Delay: {RelaunchDelay} | Current Time: {DateTime.Now}");
                             Program.Logger.Info($"Relaunching {account.Username} to {account.PlaceId}, time since last relaunch: {(DateTime.Now - account.LastPing).TotalSeconds} seconds [{account.LastPing}] | Linked: {account.LinkedAccount}");
