@@ -1606,6 +1606,10 @@ namespace RBX_Alt_Manager
             else CefBrowser.Instance.EnterBrowserMode(acc);
         }
 
+        // Modern-UI bridges to the proven classic add flows (Puppeteer-based) so the new UI doesn't duplicate them.
+        public void ModernBulkUserPass() => this.InvokeIfRequired(() => { try { bulkUserPassToolStripMenuItem_Click(null, EventArgs.Empty); } catch (Exception ex) { Program.Logger.Error($"ModernBulkUserPass: {ex}"); } });
+        public void ModernAddCustom() => this.InvokeIfRequired(() => { try { customURLJSToolStripMenuItem_Click(null, EventArgs.Empty); } catch (Exception ex) { Program.Logger.Error($"ModernAddCustom: {ex}"); } });
+
         public void SaveSettings() { try { IniSettings.Save("RAMSettings.ini"); } catch (Exception ex) { Program.Logger.Error($"SaveSettings: {ex}"); } }
 
         private void DownloadProgressBar_Click(object sender, EventArgs e)

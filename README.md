@@ -28,6 +28,23 @@ Multiple Roblox instances are built in but [must be manually enabled](#q-how-do-
 You are welcome to edit the code and open pull requests if it'll benefit this project. Found a bug? Open an issue on this repository.
 
 ## What's new
+### v2.0.0 — New glass interface, multi-Roblox resource manager & live server browser
+The biggest release yet — a redesigned interface plus real tools for running many clients at once on one PC.
+
+- **A brand-new "liquid glass" interface.** The modern UI was rebuilt from the ground up: a translucent sidebar, grouped account roster with list/cards views, a detail panel, live search, filter chips, and smooth density/accent theming. It runs on top of the same proven backend, and you can always fall back to the classic UI (Appearance → *Use classic interface*).
+- **Light & dark themes.** Switch in Appearance → Theme. Four accent colors and comfortable/compact density, all applied live.
+- **Multi-Roblox resource manager (new).** Purpose-built for running lots of clients. In Settings → *Performance · Multi-Roblox*:
+  - **Dynamic priority** — the client you're actually looking at stays at Normal CPU priority while the background alts drop to *Below normal* (or *Idle*), so your foreground game stays smooth. Safe for single-client users (one lone client is always "focused").
+  - **CPU affinity / CCD pinning** — optionally pin launched clients to a core group. On AMD X3D chips (e.g. 9950X3D) you can keep the alts on the high-frequency CCD and off the V-Cache cores your main game wants.
+  - **Trim RAM** — free trimmable memory from idle/minimized clients on demand (Active → *Trim RAM*) or automatically on minimize.
+  - **Low-graphics profile** — writes the graphics-reducing client flags that still work in 2026 (texture-quality floor, MSAA off, low FRM quality, grass distance, DPI-scale off) for launched clients. GPU/VRAM saver, anti-cheat-safe (it's config, not injection).
+  - **Live monitor** — the Active tab shows per-client CPU % and RAM in real time, with per-client Relaunch / Trim / Minimize / Close and an *Optimize all* button.
+- **Real server browser.** The Server Browser now fetches actual live public servers for a place (player counts, FPS, ping, job IDs) with one-click Join, plus a Popular-games list and your Favorites — no more sample data.
+- **Every add method wired.** Manual login, cookie import, **user:pass bulk**, and **custom URL + JS** all work from the new UI.
+- **Honest note on FPS unlock:** Roblox's Sept-2025 FastFlag allowlist means the old framerate-unlock flag (`DFIntTaskSchedulerTargetFps`) is now ignored by the client — it can't raise or cap FPS anymore. The toggle is kept for older clients but no longer does anything on current Roblox; use the Low-graphics profile and the priority/RAM tools instead to lighten many-client loads.
+
+*Multi-Roblox remains opt-in ([how to enable](#q-how-do-i-enable-multi-roblox)); a Byfron developer has said running multiple clients may be considered malicious, so enable it at your own risk.*
+
 ### v1.2.0 — Security & reliability hardening pass
 A broad hardening pass over the whole app (a multi-agent audit, then per-finding fixes):
 - **Your cookies are protected properly at rest.** The account store now lives in a locked, per-user folder (`%LOCALAPPDATA%\KingsRAM`) instead of next to the app, so it can't get copied into OneDrive/Downloads/shared folders. It's encrypted with a random per-install key (DPAPI-wrapped) rather than a value hard-coded in the app. Existing data is migrated and re-encrypted automatically on first launch.

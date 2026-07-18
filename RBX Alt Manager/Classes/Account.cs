@@ -688,6 +688,7 @@ namespace RBX_Alt_Manager
                     });
 
                     _ = Task.Run(AdjustWindowPosition);
+                    _ = ResourceManager.OnLaunched(this); // v2: apply per-instance priority/affinity/trim to the new client
 
                     return "Success";
                 }
@@ -712,6 +713,7 @@ namespace RBX_Alt_Manager
                             AccountManager.Instance.NextAccount();
 
                             _ = Task.Run(AdjustWindowPosition);
+                    _ = ResourceManager.OnLaunched(this); // v2: apply per-instance priority/affinity/trim to the new client
                         }
                         catch (Exception x)
                         {

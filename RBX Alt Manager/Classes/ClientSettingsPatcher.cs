@@ -27,17 +27,42 @@ namespace RBX_Alt_Manager.Classes
             string SettingsFN = Path.Combine(SettingsFolder.FullName, "ClientAppSettings.json");
 
             if (!string.IsNullOrEmpty(CustomFN) && File.Exists(CustomFN))
-                File.Copy(CustomFN, SettingsFN);
-            else if (AccountManager.General.Get<bool>("UnlockFPS"))
             {
-                if (File.Exists(SettingsFN) && File.ReadAllText(SettingsFN).TryParseJson(out JObject Settings))
-                {
-                    Settings["DFIntTaskSchedulerTargetFps"] = AccountManager.General.Exists("MaxFPSValue") ? AccountManager.General.Get<int>("MaxFPSValue") : 240;
-                    File.WriteAllText(SettingsFN, Settings.ToString(Newtonsoft.Json.Formatting.None));
-                }
-                else
-                    File.WriteAllText(SettingsFN, "{\"DFIntTaskSchedulerTargetFps\":240}");
+                if (File.Exists(SettingsFN)) File.Delete(SettingsFN); // File.Copy throws if the target exists
+                File.Copy(CustomFN, SettingsFN);
+                return;
             }
+
+            bool UnlockFPS = AccountManager.General.Get<bool>("UnlockFPS");
+            bool LowGraphics = AccountManager.General.Exists("PerfLowGraphics") && AccountManager.General.Get<bool>("PerfLowGraphics");
+
+            if (!UnlockFPS && !LowGraphics)
+                return;
+
+            // Merge into any existing ClientAppSettings.json rather than clobbering it.
+            JObject Settings = File.Exists(SettingsFN) && File.ReadAllText(SettingsFN).TryParseJson(out JObject Existing) ? Existing : new JObject();
+
+            // NOTE: DFIntTaskSchedulerTargetFps is NOT on Roblox's Sept-2025 FastFlag allowlist, so the client
+            // now silently ignores it — the FPS-unlock is effectively a no-op post-allowlist (kept for older
+            // clients / in case the flag is re-allowed; harmless either way, non-allowlisted flags are ignored).
+            if (UnlockFPS)
+                Settings["DFIntTaskSchedulerTargetFps"] = AccountManager.General.Exists("MaxFPSValue") ? AccountManager.General.Get<int>("MaxFPSValue") : 240;
+
+            // Low-graphics profile for background alts — the flags that DO survive the allowlist (verified
+            // July 2026, see the raw allowlist.json): lower texture quality, kill MSAA, floor the FRM quality
+            // level, drop grass geometry, and disable DPI render-scaling. All GPU/VRAM reducers, anti-cheat-safe.
+            if (LowGraphics)
+            {
+                Settings["DFFlagTextureQualityOverrideEnabled"] = true;
+                Settings["DFIntTextureQualityOverride"] = 0;
+                Settings["FIntDebugForceMSAASamples"] = 0;
+                Settings["DFIntDebugFRMQualityLevelOverride"] = 1;
+                Settings["FIntFRMMaxGrassDistance"] = 0;
+                Settings["FIntFRMMinGrassDistance"] = 0;
+                Settings["DFFlagDisableDPIScale"] = true;
+            }
+
+            File.WriteAllText(SettingsFN, Settings.ToString(Newtonsoft.Json.Formatting.None));
         }
     }
 }

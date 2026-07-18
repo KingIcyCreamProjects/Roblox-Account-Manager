@@ -418,6 +418,7 @@
     </Compile>
     <Compile Include="Classes\Presence.cs" />
     <Compile Include="Classes\RobloxProcess.cs" />
+    <Compile Include="Classes\ResourceManager.cs" />
     <Compile Include="Classes\RobloxWatcher.cs" />
     <Compile Include="Classes\Utilities.cs" />
     <Compile Include="Classes\WM.cs" />

@@ -4,6 +4,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using RBX_Alt_Manager.Classes;
 using RBX_Alt_Manager.Nexus;
+using RestSharp;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -31,8 +32,15 @@ namespace RBX_Alt_Manager.Forms
         private WebView2 web;
         private Form owner;
         private System.Windows.Forms.Timer pushTimer;
+        private System.Windows.Forms.Timer resTimer; // v2: faster resource poll (CPU/RAM + dynamic priority)
         private bool ready;
         private bool switchingToClassic;
+
+        // Latest per-account live process stats (username -> stat), refreshed by the resource poll timer.
+        private Dictionary<string, ResourceManager.Stat> lastStats = new Dictionary<string, ResourceManager.Stat>();
+
+        // Unauthenticated client for the public server/games browser (games.roblox.com needs no cookie).
+        private static readonly RestClient GamesClient = new RestClient("https://games.roblox.com/");
 
         // Open the modern UI, hiding the classic window on success. Safe to call more than once (no-ops after first).
         public static void Launch(Form classicOwner)
@@ -100,6 +108,11 @@ namespace RBX_Alt_Manager.Forms
                 pushTimer.Tick += (s, e) => { if (ready) PushAccounts("accounts"); };
                 pushTimer.Start();
 
+                // Faster loop for live CPU/RAM stats + dynamic per-instance priority (needs ~seconds between CPU samples).
+                resTimer = new System.Windows.Forms.Timer { Interval = 3500 };
+                resTimer.Tick += (s, e) => PollStats();
+                resTimer.Start();
+
                 // Success — retire the classic window.
                 try { owner?.Hide(); } catch { }
             }
@@ -113,6 +126,7 @@ namespace RBX_Alt_Manager.Forms
                 Launched = false;
                 try { owner?.Show(); } catch { }
                 try { pushTimer?.Stop(); } catch { }
+                try { resTimer?.Stop(); } catch { }
                 Close();
             }
         }
@@ -155,11 +169,35 @@ namespace RBX_Alt_Manager.Forms
             catch (Exception ex) { Program.Logger.Error($"[ModernUI] PushAccounts: {ex}"); }
         }
 
+        // Poll live per-instance CPU/RAM and apply dynamic priority/affinity, then push a lightweight stats
+        // message the UI patches onto existing rows (no full re-render, so it never disrupts scroll/typing).
+        private void PollStats()
+        {
+            try
+            {
+                var byTracker = ResourceManager.Poll();
+                var byUser = new Dictionary<string, ResourceManager.Stat>();
+                foreach (var a in AccountManager.AccountsList ?? new List<Account>())
+                    if (a != null && !string.IsNullOrEmpty(a.BrowserTrackerID) && byTracker.TryGetValue(a.BrowserTrackerID, out var st))
+                        byUser[a.Username] = st;
+                lastStats = byUser;
+
+                if (ready)
+                {
+                    var stats = new Dictionary<string, object>();
+                    foreach (var kv in byUser) stats[kv.Key] = new { cpu = kv.Value.Cpu, ram = kv.Value.RamMB, min = kv.Value.Minimized };
+                    Post(new { type = "stats", stats });
+                }
+            }
+            catch (Exception ex) { Program.Logger.Error($"[ModernUI] PollStats: {ex}"); }
+        }
+
         private object MapSettings()
         {
             var g = AccountManager.General; var ac = AccountManager.AccountControl; var dev = AccountManager.Developer;
             string GetS(IniSection f, string k, string dflt) { try { return f != null && f.Exists(k) ? f.Get(k) : dflt; } catch { return dflt; } }
             bool GetB(IniSection f, string k) { try { return f != null && f.Get<bool>(k); } catch { return false; } }
+            bool GetBd(IniSection f, string k, bool dflt) { try { return f != null && f.Exists(k) ? f.Get<bool>(k) : dflt; } catch { return dflt; } }
             int GetI(IniSection f, string k, int dflt) { try { return f != null && f.Exists(k) ? f.Get<int>(k) : dflt; } catch { return dflt; } }
             try
             {
@@ -191,6 +229,18 @@ namespace RBX_Alt_Manager.Forms
                         maxFps = GetI(g, "MaxFPSValue", 120),
                         relaunchDelay = GetI(ac, "RelaunchDelay", 60),
                         connPort = GetI(ac, "NexusPort", 5242),
+                    },
+                    // v2 multi-Roblox resource manager (see Classes/ResourceManager.cs).
+                    perf = new
+                    {
+                        manage = GetBd(g, "PerfManage", true),
+                        dynamic = GetBd(g, "PerfDynamicPriority", true),
+                        bgPriority = GetS(g, "PerfBackgroundPriority", "below"),
+                        affinity = GetS(g, "PerfAffinityMode", "all"),
+                        trimOnMin = GetBd(g, "PerfTrimOnMinimize", false),
+                        autoMin = GetBd(g, "PerfAutoMinimizeAlts", false),
+                        lowGfx = GetBd(g, "PerfLowGraphics", false),
+                        cores = Environment.ProcessorCount,
                     },
                 };
             }
@@ -230,16 +280,19 @@ namespace RBX_Alt_Manager.Forms
 
             // Active signals (client / nexus / uptime / disconnected) — best-effort from what the app knows locally.
             object act = null;
+            double cpu = 0; long ram = 0; bool minimized = false;
+            bool hasProc = lastStats.TryGetValue(a.Username ?? "", out var stat);
+            if (hasProc) { cpu = stat.Cpu; ram = stat.RamMB; minimized = stat.Minimized; }
             try
             {
                 var ca = AccountControl.Instance?.Accounts?.FirstOrDefault(c => c.Username == a.Username);
                 bool nexus = ca != null && ca.Status == AccountStatus.Online;
                 bool inGame = p != null && p.userPresenceType == UserPresenceType.InGame;
-                bool client = nexus || inGame;
+                bool client = nexus || inGame || hasProc;
                 if (nexus && !string.IsNullOrEmpty(ca.InGameJobId)) job = ca.InGameJobId;
-                // Show in the Active view whenever the account is tracked by Nexus (ca != null) OR has a live client,
-                // so a *disconnected* account is visible (that's the whole point of auto-reconnect) — not only connected ones.
-                if (ca != null || inGame) act = new object[] { client ? 1 : 0, nexus ? 1 : 0, 0, 0 };
+                // Show in the Active view whenever the account is Nexus-tracked, in-game, OR has a live Roblox
+                // process (mapped by tracker) — so the resource monitor sees every running client, not just Nexus ones.
+                if (ca != null || inGame || hasProc) act = new object[] { client ? 1 : 0, nexus ? 1 : 0, 0, 0 };
             }
             catch { }
 
@@ -260,6 +313,9 @@ namespace RBX_Alt_Manager.Forms
                 rbx = 0,
                 prem = false,
                 act,
+                cpu,
+                ram,
+                min = minimized,
                 uid = a.UserID,
                 job,
                 notes = a.Description ?? ""
@@ -301,6 +357,14 @@ namespace RBX_Alt_Manager.Forms
                     case "setSetting": HandleSetSetting(m); break;
                     case "savePlace": SaveGlobalTarget((string)m["placeId"], (string)m["jobId"], true); break;
                     case "switchToClassic": SwitchToClassic(); break;
+                    // v2 resource manager + server browser
+                    case "optimizeAll": { int n = ResourceManager.OptimizeAll(); Toast(n > 0 ? $"Optimized {n} client" + (n == 1 ? "" : "s") : "No running clients"); break; }
+                    case "trimAll": { int n = ResourceManager.TrimAll(); Toast(n > 0 ? $"Trimmed RAM on {n} client" + (n == 1 ? "" : "s") : "No running clients"); PollStats(); break; }
+                    case "trimInstance": { var a = Find((string)m["user"]); Toast(ResourceManager.TrimOne(a) ? "Trimmed RAM" : "That client isn't running"); PollStats(); break; }
+                    case "fetchServers": HandleFetchServers(m); break;
+                    case "fetchGames": HandleFetchGames(); break;
+                    case "fetchFavorites": HandleFetchFavorites(); break;
+                    case "joinJob": HandleJoinJob(m); break;
                     default: Program.Logger.Info($"[ModernUI] unhandled: {m}"); break;
                 }
             }
@@ -482,6 +546,14 @@ namespace RBX_Alt_Manager.Forms
                     case "accent": AccountManager.General.Set("ModernAccent", val); break;
                     case "density": AccountManager.General.Set("ModernDensity", val); break;
                     case "theme": AccountManager.General.Set("ModernTheme", val); break;
+                    // v2 resource-manager settings (consumed by Classes/ResourceManager.cs + ClientSettingsPatcher).
+                    case "perfManage": AccountManager.General.Set("PerfManage", val); break;
+                    case "dynamicPriority": AccountManager.General.Set("PerfDynamicPriority", val); break;
+                    case "bgPriority": AccountManager.General.Set("PerfBackgroundPriority", val); break;
+                    case "affinityMode": AccountManager.General.Set("PerfAffinityMode", val); break;
+                    case "trimOnMin": AccountManager.General.Set("PerfTrimOnMinimize", val); break;
+                    case "autoMin": AccountManager.General.Set("PerfAutoMinimizeAlts", val); break;
+                    case "lowGfx": AccountManager.General.Set("PerfLowGraphics", val); break;
                     default: Program.Logger.Info($"[ModernUI] setSetting: unknown key {key}"); return;
                 }
                 AccountManager.Instance.SaveSettings();
@@ -588,12 +660,102 @@ namespace RBX_Alt_Manager.Forms
                 {
                     case "cookie": new ImportForm().Show(this); break;
                     case "manual": await AccountManager.Instance.ModernAddAccount(); PushAccounts("accounts"); break;
+                    case "userpass": AccountManager.Instance.ModernBulkUserPass(); break;
+                    case "custom": AccountManager.Instance.ModernAddCustom(); break;
                     default:
                         MessageBox.Show(this, "That add method isn't in the new UI yet — use Manual Login or Cookie import.", "KingsRAM", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         break;
                 }
             }
             catch (Exception ex) { Program.Logger.Error($"[ModernUI] add {mode}: {ex}"); }
+        }
+
+        // ---------------- Server browser (real data) ----------------
+
+        private long ResolvePlaceId(JObject m)
+        {
+            long placeId = 0;
+            long.TryParse((string)m["placeId"], out placeId);
+            if (placeId <= 0) { try { long.TryParse(AccountManager.General?.Get("SavedPlaceId"), out placeId); } catch { } }
+            return placeId;
+        }
+
+        // Public server list for a place — unauthenticated GET games.roblox.com/v1/games/{id}/servers/Public.
+        private async void HandleFetchServers(JObject m)
+        {
+            long placeId = ResolvePlaceId(m);
+            if (placeId <= 0) { Toast("Enter a Place ID first"); Post(new { type = "servers", data = new object[0], placeId = 0 }); return; }
+            try
+            {
+                var resp = await GamesClient.ExecuteAsync(new RestRequest($"v1/games/{placeId}/servers/Public?sortOrder=Asc&limit=100"));
+                var data = new List<object>();
+                if (resp.IsSuccessful && !string.IsNullOrEmpty(resp.Content) && JObject.Parse(resp.Content)["data"] is JArray arr)
+                    foreach (var s in arr)
+                        data.Add(new
+                        {
+                            id = (string)s["id"],
+                            playing = (int?)s["playing"] ?? 0,
+                            max = (int?)s["maxPlayers"] ?? 0,
+                            fps = (int)Math.Round((double?)s["fps"] ?? 0),
+                            ping = (int?)s["ping"] ?? 0,
+                        });
+                Post(new { type = "servers", data, placeId });
+                if (data.Count == 0) Toast("No public servers found for that place");
+            }
+            catch (Exception ex) { Program.Logger.Error($"[ModernUI] fetchServers: {ex}"); Post(new { type = "servers", data = new object[0], placeId }); Toast("Couldn't load servers"); }
+        }
+
+        // Popular games — unauthenticated GET games.roblox.com/v1/games/list.
+        private async void HandleFetchGames()
+        {
+            try
+            {
+                var resp = await GamesClient.ExecuteAsync(new RestRequest("v1/games/list?model.startRows=0&model.maxRows=30"));
+                var data = new List<object>();
+                if (resp.IsSuccessful && !string.IsNullOrEmpty(resp.Content) && JObject.Parse(resp.Content)["games"] is JArray arr)
+                    foreach (var gme in arr)
+                        data.Add(new { name = (string)gme["name"], placeId = (long?)gme["placeId"] ?? 0, playing = (int?)gme["playerCount"] ?? 0 });
+                Post(new { type = "games", data });
+            }
+            catch (Exception ex) { Program.Logger.Error($"[ModernUI] fetchGames: {ex}"); Post(new { type = "games", data = new object[0] }); }
+        }
+
+        // Favorites — the classic FavoriteGames.json in the working dir (may not exist).
+        private void HandleFetchFavorites()
+        {
+            var data = new List<object>();
+            try
+            {
+                string fn = Path.Combine(Environment.CurrentDirectory, "FavoriteGames.json");
+                if (File.Exists(fn) && JsonConvert.DeserializeObject<JArray>(File.ReadAllText(fn)) is JArray arr)
+                    foreach (var f in arr)
+                        data.Add(new { name = (string)(f["Name"] ?? f["name"]), placeId = (long?)(f["PlaceID"] ?? f["placeId"]) ?? 0, priv = (string)(f["PrivateServer"] ?? "") });
+            }
+            catch (Exception ex) { Program.Logger.Error($"[ModernUI] fetchFavorites: {ex}"); }
+            Post(new { type = "favorites", data });
+        }
+
+        // Join a specific server/game. Uses the named account, else the first checkbox-selected/valid account.
+        private async void HandleJoinJob(JObject m)
+        {
+            long placeId = ResolvePlaceId(m);
+            if (placeId <= 0) { Toast("No Place ID to join"); return; }
+            string jobId = (string)m["jobId"] ?? "";
+
+            var a = Find((string)m["user"])
+                    ?? AccountManager.AccountsList?.FirstOrDefault(x => x.Valid)
+                    ?? AccountManager.AccountsList?.FirstOrDefault();
+            if (a == null) { Toast("Add an account first"); return; }
+
+            try
+            {
+                string res = await a.JoinServer(placeId, jobId);
+                if (!string.IsNullOrEmpty(res) && res != "Success")
+                    Toast(res.StartsWith("ERROR:") ? res.Substring(6).Trim() : res);
+                else
+                    Toast($"Joining as {a.Username}");
+            }
+            catch (Exception ex) { Program.Logger.Error($"[ModernUI] joinJob: {ex}"); Toast($"Join failed: {ex.Message}"); }
         }
     }
 }
