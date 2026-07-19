@@ -84,11 +84,14 @@ namespace RBX_Alt_Manager.Classes
             WaitForExitTimer = new System.Timers.Timer(500);
             WaitForExitTimer.Elapsed += (s, e) =>
             {
-                if (AccountManager.Watcher.Get<bool>(" ExitIfNoConnection") && AccountManager.Watcher.Get<double>("NoConnectionTimeout") is double Timeout && Timeout > 0 && !IsConnected && (DateTime.Now - DisconnectedTime).TotalSeconds is double Seconds && Seconds > Timeout)
-                    KillProcess($"Lost connection for more than {Seconds} second(s)");
-
                 try
                 {
+                    // Inside the try so a throw here (e.g. KillProcess disposing a not-yet-assigned LogStream) is
+                    // logged rather than silently swallowed by System.Timers.Timer — otherwise the client is never
+                    // killed AND StreamDisposed stays true, permanently disabling log watching for this process.
+                    if (AccountManager.Watcher.Get<bool>(" ExitIfNoConnection") && AccountManager.Watcher.Get<double>("NoConnectionTimeout") is double Timeout && Timeout > 0 && !IsConnected && (DateTime.Now - DisconnectedTime).TotalSeconds is double Seconds && Seconds > Timeout)
+                        KillProcess($"Lost connection for more than {Seconds} second(s)");
+
                     if (!RbxProcess.HasExited && !Program.Closed)
                         return;
 
@@ -227,7 +230,7 @@ namespace RBX_Alt_Manager.Classes
             Program.Logger.Info($"Attempting to kill process {RbxProcess.Id}, reason: {Reason}");
             StreamDisposed = true;
 
-            LogStream.Dispose();
+            LogStream?.Dispose(); // may be null if the log file was never located (heavy concurrency / slow handle.exe)
             RbxProcess.Kill();
 
             return true;

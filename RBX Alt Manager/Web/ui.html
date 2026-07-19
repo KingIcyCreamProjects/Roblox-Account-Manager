@@ -716,7 +716,10 @@ function applyPush(msg){
     }
     if(Array.isArray(msg.accounts)) state.accounts = msg.accounts;
     if(msg.settings) applySettings(msg.settings, msg.type==="init");
-    var sig=safeStringify(state.accounts);
+    // Strip volatile live-stat fields (cpu/ram/min) from the change-detection signature — they fluctuate every
+    // push for any running client, which would otherwise force a full re-render every 12s (blowing away scroll,
+    // open menus, and in-progress alias/notes edits). Live stats arrive separately via the "stats" push.
+    var sig=safeStringify(state.accounts.map(function(a){ return Object.assign({}, a, {cpu:0,ram:0,min:0}); }));
     if(msg.type!=="init" && sig===state.lastSig) return;
     state.lastSig=sig;
     render();
@@ -956,6 +959,10 @@ function renderDetail(){
   if(!u){ d.classList.add("hidden"); d.innerHTML=""; return; }
   var a=state.accounts.filter(function(x){return x.u===u;})[0];
   if(!a){ state.selectedUser=null; d.classList.add("hidden"); d.innerHTML=""; return; }
+  // Don't rebuild the panel out from under an in-progress edit: if focus is inside it (typing alias/notes), a
+  // rebuild would destroy the field, drop focus to <body>, and let keystrokes fall through to global hotkeys.
+  // Values re-sync on the next push after the user clicks away.
+  if(d.contains(document.activeElement)) return;
   d.classList.remove("hidden");
   d.innerHTML =
     '<div class="detail-head">'+

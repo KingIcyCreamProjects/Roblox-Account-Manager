@@ -622,7 +622,9 @@ namespace RBX_Alt_Manager
 
                         if (result.StatusCode == HttpStatusCode.OK)
                         {
-                            if (ParseAccessCode(response, out string Code))
+                            // Parse the re-fetched page (result), NOT the stale 302 redirect (response) whose body
+                            // has no joinPrivateGame markup — otherwise the code silently falls back to a public join.
+                            if (ParseAccessCode(result, out string Code))
                             {
                                 JoinVIP = true;
                                 AccessCode = Code;

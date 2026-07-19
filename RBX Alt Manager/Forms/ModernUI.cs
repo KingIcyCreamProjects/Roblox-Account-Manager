@@ -127,6 +127,10 @@ namespace RBX_Alt_Manager.Forms
                 try { owner?.Show(); } catch { }
                 try { pushTimer?.Stop(); } catch { }
                 try { resTimer?.Stop(); } catch { }
+                // Fall back to classic WITHOUT tearing down the process: FormClosed calls Application.Exit()
+                // unless switchingToClassic is set. Without this the just-reshown owner window dies too and the
+                // default UseModernUI=true path re-bricks on every relaunch. Mirrors SwitchToClassic().
+                switchingToClassic = true;
                 Close();
             }
         }

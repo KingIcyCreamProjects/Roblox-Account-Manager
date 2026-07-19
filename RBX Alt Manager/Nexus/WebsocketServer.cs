@@ -78,15 +78,12 @@ namespace RBX_Alt_Manager.Nexus
         protected override void OnClose(CloseEventArgs e)
         {
             if (AccountControl.Instance.ContextList.TryGetValue(Context, out ControlledAccount Account))
-            {
                 // Only flip the account Offline if this socket is still its current one. A late OnClose
                 // from a superseded socket (duplicate-name reconnect/teleport) must not disconnect an
                 // account that has already reconnected on a newer socket — just drop the stale entry.
-                if (Account.Context == Context)
-                    Account.Disconnect();
-                else
-                    AccountControl.Instance.ContextList.TryRemove(Context, out _);
-            }
+                // CloseIfCurrent does the check-and-teardown atomically under the account's lock so a
+                // concurrent Connect() can't swap Context between the check and Disconnect().
+                Account.CloseIfCurrent(Context);
         }
 
         protected override void OnError(ErrorEventArgs e) => Program.Logger.Error($"WebsocketServer Error {_name}: {e.Message} {e.Exception}");

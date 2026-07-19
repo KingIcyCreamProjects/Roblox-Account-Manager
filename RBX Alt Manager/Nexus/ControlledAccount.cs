@@ -32,6 +32,13 @@ namespace RBX_Alt_Manager.Nexus
 
         [JsonIgnore] public WebSocketContext Context;
 
+        // Serializes Connect/Disconnect/OnClose for THIS account. websocket-sharp dispatches each physical
+        // connection's OnOpen/OnClose on its own thread, so two overlapping same-name reconnects can otherwise
+        // interleave the check-then-act on Status/Context/ContextList and leak a zombie socket that keeps the
+        // account stuck Offline while a live client is still pinging. Monitor is reentrant so Connect()'s call
+        // to Disconnect() is fine.
+        [JsonIgnore] private readonly object SyncLock = new object();
+
         public ControlledAccount(Account account)
         {
             LinkedAccount = account;
@@ -42,21 +49,24 @@ namespace RBX_Alt_Manager.Nexus
 
         public void Connect(WebSocketContext Context)
         {
-            if (Status == AccountStatus.Online)
+            lock (SyncLock)
             {
-                Logger.Warn($"{Username} was already connected, disconnecting...");
-                Disconnect();
+                if (Status == AccountStatus.Online)
+                {
+                    Logger.Warn($"{Username} was already connected, disconnecting...");
+                    Disconnect();
+                }
+
+                Status = AccountStatus.Online;
+                LastPing = DateTime.Now;
+
+                this.Context = Context;
+
+                AccountControl.Instance.ContextList[Context] = this;
+                AccountControl.Instance.AccountsView.RefreshObject(this);
+
+                Logger.Info($"{Username} has connected");
             }
-
-            Status = AccountStatus.Online;
-            LastPing = DateTime.Now;
-
-            this.Context = Context;
-
-            AccountControl.Instance.ContextList[Context] = this;
-            AccountControl.Instance.AccountsView.RefreshObject(this);
-
-            Logger.Info($"{Username} has connected");
 
             new Task(() =>
             {
@@ -72,21 +82,39 @@ namespace RBX_Alt_Manager.Nexus
 
         public void Disconnect()
         {
-            Logger.Info($"{Username} has disconnected");
-
-            Status = AccountStatus.Offline;
-            ClientCanReceive = false;
-
-            if (Context != null)
+            lock (SyncLock)
             {
-                AccountControl.Instance.ContextList.TryRemove(Context, out _);
-                // Close the socket we're dropping. On a duplicate-name reconnect Connect() calls
-                // Disconnect() on the still-open old socket; without this Close() it leaks and its
-                // late OnClose later flips the (now reconnected) account Offline.
-                try { Context.WebSocket.Close(); } catch { }
-            }
+                Logger.Info($"{Username} has disconnected");
 
-            AccountControl.Instance.AccountsView.RefreshObject(this);
+                Status = AccountStatus.Offline;
+                ClientCanReceive = false;
+
+                if (Context != null)
+                {
+                    AccountControl.Instance.ContextList.TryRemove(Context, out _);
+                    // Close the socket we're dropping. On a duplicate-name reconnect Connect() calls
+                    // Disconnect() on the still-open old socket; without this Close() it leaks and its
+                    // late OnClose later flips the (now reconnected) account Offline.
+                    try { Context.WebSocket.Close(); } catch { }
+                }
+
+                AccountControl.Instance.AccountsView.RefreshObject(this);
+            }
+        }
+
+        // Called from OnClose. Disconnects only if the closing socket is still this account's current one,
+        // atomically under SyncLock so a concurrent Connect() can't swap this.Context between the check and
+        // the teardown (the check-then-act window that leaked zombie sockets). A superseded socket just drops
+        // its stale ContextList entry.
+        public void CloseIfCurrent(WebSocketContext ClosingContext)
+        {
+            lock (SyncLock)
+            {
+                if (Context == ClosingContext)
+                    Disconnect();
+                else
+                    AccountControl.Instance.ContextList.TryRemove(ClosingContext, out _);
+            }
         }
 
         public void HandleMessage(string Message)

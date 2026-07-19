@@ -616,7 +616,10 @@ namespace RBX_Alt_Manager
                 {
                     byte[] Data = File.Exists(SaveFilePath) ? File.ReadAllBytes(SaveFilePath) : Array.Empty<byte>();
 
-                    if (Data.Length > 0)
+                    // Guard the slice like LoadAccounts/backup-recovery do: a store truncated to 1..63 bytes would
+                    // otherwise throw ArgumentOutOfRangeException from the span ctor and get mislabeled "Incorrect
+                    // Password!", hiding the real corruption from the user.
+                    if (Data.Length >= Cryptography.RAMHeader.Length)
                     {
                         var Header = new ReadOnlySpan<byte>(Data, 0, Cryptography.RAMHeader.Length);
 
@@ -771,7 +774,10 @@ namespace RBX_Alt_Manager
             {
                 account.Password = Password;
 
-                Account exists = AccountsList.AsReadOnly().FirstOrDefault(acc => acc.UserID == account.UserID);
+                // AddAccount runs off the UI thread (bulk import, the web-API ImportCookie handler, the browser
+                // login flow); take accountsLock like every other accessor so a concurrent UI drag/sort/remove
+                // can't invalidate this enumerator (InvalidOperationException). .AsReadOnly() snapshots nothing.
+                Account exists; lock (accountsLock) exists = AccountsList.FirstOrDefault(acc => acc.UserID == account.UserID);
 
                 if (exists != null)
                 {
@@ -1169,7 +1175,14 @@ namespace RBX_Alt_Manager
 
             if (WebServer.Get<bool>("EveryRequestRequiresPassword") && !PasswordOK(Password)) return Reply("Invalid Password, make sure your password contains 6 or more characters", false, 401, "Invalid Password");
 
-            if ((Method == "GetCookie" || Method == "GetAccounts" || Method == "GetAccountsJson" || Method == "LaunchAccount" || Method == "FollowUser") && !PasswordOK(Password)) return Reply("Invalid Password, make sure your password contains 6 or more characters", false, 401, "Invalid Password");
+            // These state-changing / sensitive methods require the password even over loopback. The Origin check
+            // above only stops CSRF that carries an Origin header (POST / CORS); a browser no-cors GET via
+            // <img>/<script>/<link> sends NO Origin, so without a password gate a malicious page open on the same
+            // machine could silently drive block/unblock/force-join on a loaded account. Block/Unblock/SetServer/
+            // SetRecommendedServer had no gate at all before this.
+            if ((Method == "GetCookie" || Method == "GetAccounts" || Method == "GetAccountsJson" || Method == "LaunchAccount" || Method == "FollowUser"
+                || Method == "BlockUser" || Method == "UnblockUser" || Method == "UnblockEveryone" || Method == "GetBlockedList" || Method == "SetServer" || Method == "SetRecommendedServer")
+                && !PasswordOK(Password)) return Reply("Invalid Password, make sure your password contains 6 or more characters", false, 401, "Invalid Password");
 
             if (Method == "GetAccounts")
             {
